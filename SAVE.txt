@@ -1,0 +1,52 @@
+""""
+PORT = '/dev/ttyUSB0'
+
+
+def start_lidar():
+    lidar = RPLidar(PORT, baudrate=256000, timeout=3)
+    
+    print("LIDAR demarre")
+    return lidar
+
+def stop_lidar(lidar):
+    print("Arret du LIDAR...")
+    lidar.stop()
+    lidar.stop_motor()
+    lidar.disconnect()
+    print("LIDAR arrete proprement")
+
+def gerer(scan):
+
+    gestion = CGestion(scan)
+
+    gestion.trier_par_angle()
+    gestion.filtrer_distance()
+    gestion.filtrer_qualite()
+    gestion.filtrer_angle()
+
+    obstacle_proche = gestion.get_obstacle_proche()
+    return obstacle_proche
+
+lidar = start_lidar()
+
+try:
+    print("Analyse en cours ... (Ctrl+C pour arreter)")
+    for scan in lidar.iter_scans():
+        #for quality, angle, distance in scan:
+            #print(f"Qualit�: {quality}, Angle: {angle:.2f}, Distance: {distance:.2f}")
+        proche = gerer(scan)
+        
+        if proche:
+            q, a, d = proche
+            print(f"OBSTACLE : Angle: {a:.1f}°, Dist: {d:.0f}mm (Qualite: {q})")
+        else:
+            print("Chemin libre. . .")
+
+        time.sleep(0.01)
+
+except KeyboardInterrupt:
+    pass
+
+finally:
+    stop_lidar(lidar)
+"""
