@@ -13,59 +13,69 @@ class CCerveau:
         self.historique_obstacles = {}
         self.angle_destination = 0
     
-    def start_detection(self, etat_signal=None, cerveau=None, signal=None, com=None):
+    def start_detection(self, signal, com):
         if self.lidar.start_lidar():
-            self.lidar.lidar.clear_input()
-            print("Analyse en cours ... (Ctrl+C pour arreter)")
+            print("Analyse active. Mode Turbo engag�.")
             try:
-                for scan in self.lidar.lidar.iter_scans():
-                    obstacle_proche = self.lidar.gerer(scan)
+                # On r�cup�re l'it�rateur
+                scans = self.lidar.lidar.iter_scans()
+                
+                while True:
+                    try:
+                        scan = next(scans)
+                        
+                        # OPTIMISATION : On utilise la nouvelle fonction 1 seul passage
+                        obstacle_proche = self.gestion_lidar.filtrer_tout_en_un(scan)
+                        
+                        # On cherche le plus proche uniquement si on a des points
+                        plus_proche = self.gestion_lidar.get_obstacle_proche()
 
+                        if plus_proche:
+                            q, a, d = plus_proche
+                            self.historique_obstacles[d] = a
+                            
+                            if d < 250:
+                                print("!!! STOP : OBSTACLE !!!")
+                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
+                                #break
+                            elif d >= 250:
+                                com.send_command(0x05, b'\x1E\x00\x00\x00\x00\x00')# Avancer
 
-                    if obstacle_proche:
-                        self.q, self.a, self.d = obstacle_proche
-                        self.historique_obstacles[self.d] = self.a
-
-                        if self.d < 200:
-                            self.lidar.stop_lidar() #stop moteur
-                            print("Obstacle trop proche ! Arrêt d'urgence.")
+                            if len(self.historique_obstacles) >= 10:
+                                self.calcul_destination()
+                        
+                        # V�rification signal XBEE
+                        msg = signal.read_signal()
+                        if msg == "STOP": 
+                            com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
                             break
 
-                        #print(f"OBSTACLE : Angle: {self.a:.1f}°, Dist: {self.d:.0f}mm (Qualite: {self.q})")
-
-                        if len(self.historique_obstacles) >= 10:
-                            self.calcul_destination()
-                    else:
-                        #print("Chemin libre. . .")
-                        pass
-                    
-                    if com.gestion_start_and_stop(etat_signal, cerveau, signal, com) == False:
-                        print("Arrêt de la détection en cours...")
-                        self.lidar.stop_lidar()
-                        break
-
-                    
-                   
-            except KeyboardInterrupt:
-                pass
+                    except ValueError: # Souvent l'erreur derri�re "mismatch"
+                        print("Sync lost... purger le buffer")
+                        self.lidar.lidar.clear_input()
+                        continue
+                        
+            except Exception as e:
+                print(f"Erreur majeure : {e}")
             finally:
                 self.lidar.stop_lidar()
-        else:
-            print("Erreur lors du démarrage du LIDAR")
     
     def stop_detection(self):
         self.lidar.stop_lidar()
     
     def calcul_destination(self):
+        if not self.historique_obstacles: 
+            return 0, 0
+            
         dist_max = max(self.historique_obstacles.keys())
-        
         self.angle_destination = self.historique_obstacles[dist_max]
         
-        print("-" * 30)
-        print(f"ANALYSE : Sur 10 points, la voie la plus libre est à :")
-        print(f"Angle: {self.angle_destination:.1f}° | Distance: {dist_max:.0f}mm")
-        print("-" * 30)
+        print(f"--- DESTINATION : Angle {self.angle_destination:.1f}� | Voie libre � {dist_max:.0f}mm ---")
+        
+        # LOGIQUE DE DIRECTION :
+        # Si angle entre 0 et 30 -> Tourner un peu � droite
+        # Si angle entre 330 et 360 -> Tourner un peu � gauche
+        # (A adapter selon le montage de ton LIDAR)
         
         self.historique_obstacles.clear()
-        
         return self.angle_destination, dist_max

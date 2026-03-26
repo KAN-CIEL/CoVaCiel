@@ -19,14 +19,21 @@ class CDetection:
             return False
     
     def stop_lidar(self):
+        # On v�rifie si l'objet lidar existe
         if self.lidar:
-            print("Arret du LIDAR...")
-            self.lidar.stop()
-            self.lidar.stop_motor()
-            self.lidar.disconnect()
-            print("LIDAR arrete proprement")
+            try:
+                # On arr�te les scans et le moteur
+                self.lidar.stop()
+                self.lidar.stop_motor()
+                # On ferme la connexion s�rie proprement
+                self.lidar.disconnect()
+                print("LIDAR arr�t� proprement.")
+            except Exception as e:
+                print(f"Note: Erreur lors de la fermeture : {e}")
+            finally:
+                self.lidar = None # On remet � None pour �viter de boucler
         else:
-            print("LIDAR n'est pas demarre.")
+            print("LIDAR d�j� arr�t� ou non d�marr�.")
     
     def gerer(self, scan):
         gestion = CGestion()
