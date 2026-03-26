@@ -15,6 +15,7 @@ class CCerveau:
     
     def start_detection(self, signal, com):
         if self.lidar.start_lidar():
+            com.start()
             print("Analyse active. Mode Turbo engag�.")
             try:
                 # On r�cup�re l'it�rateur
@@ -39,7 +40,7 @@ class CCerveau:
                                 com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
                                 #break
                             elif d >= 250:
-                                com.send_command(0x05, b'\x1E\x00\x00\x00\x00\x00')# Avancer
+                                print(com.send_command(0x05, b'\x14\x00\x00\x00\x00\x00'))# Avancer
 
                             if len(self.historique_obstacles) >= 10:
                                 self.calcul_destination()
@@ -50,7 +51,7 @@ class CCerveau:
                             com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
                             break
 
-                    except ValueError: # Souvent l'erreur derri�re "mismatch"
+                    except ValueError: # Souvent l'erreur derriere "mismatch"
                         print("Sync lost... purger le buffer")
                         self.lidar.lidar.clear_input()
                         continue
