@@ -30,6 +30,7 @@ class CCerveau:
                         
                         # On cherche le plus proche uniquement si on a des points
                         plus_proche = self.gestion_lidar.get_obstacle_proche()
+                        plus_loin = self.gestion_lidar.get_obstacle_loin()
 
                         if plus_proche:
                             q, a, d = plus_proche
@@ -38,17 +39,35 @@ class CCerveau:
                             if d < 250:
                                 print("!!! STOP : OBSTACLE !!!")
                                 com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
+                                #com.send_command(0x07, b'\x69\x00\x00\x00\x00\x00')
                                 #break
-                            elif d >= 250:
-                                print(com.send_command(0x05, b'\x14\x00\x00\x00\x00\x00'))# Avancer
+                            #elif d >= 250:
+                                #print(com.send_command(0x05, b'\x1E\x00\x00\x00\x00\x00'))# Avancer
+                                #com.send_command(0x07, b'\x41\x00\x00\x00\x00\x00')
 
                             if len(self.historique_obstacles) >= 10:
-                                self.calcul_destination()
+                                angle_destination, dist_max = self.calcul_destination()
+                            
+                                #self.angle_destination, dist_max = self.calcul_destination()
+                                servo_angle = self.converssion_angle(angle_destination)
+
+                                trame = bytes([
+                                    servo_angle,
+                                    0x00,
+                                    0x00,
+                                    0x00,
+                                    0x00,
+                                    0x00
+                                ])
+
+                                com.send_command(0x07, trame)
+
                         
-                        # V�rification signal XBEE
+                        # Verification signal XBEE
                         msg = signal.read_signal()
                         if msg == "STOP": 
                             com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
+                            com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
                             break
 
                     except ValueError: # Souvent l'erreur derriere "mismatch"
@@ -69,9 +88,9 @@ class CCerveau:
             return 0, 0
             
         dist_max = max(self.historique_obstacles.keys())
-        self.angle_destination = self.historique_obstacles[dist_max]
+        angle_libre = self.historique_obstacles[dist_max]
         
-        print(f"--- DESTINATION : Angle {self.angle_destination:.1f}� | Voie libre � {dist_max:.0f}mm ---")
+        print(f"--- DESTINATION : Angle {angle_libre:.1f}� | Voie libre � {dist_max:.0f}mm ---")
         
         # LOGIQUE DE DIRECTION :
         # Si angle entre 0 et 30 -> Tourner un peu � droite
@@ -79,4 +98,16 @@ class CCerveau:
         # (A adapter selon le montage de ton LIDAR)
         
         self.historique_obstacles.clear()
-        return self.angle_destination, dist_max
+        return angle_libre, dist_max
+
+    def converssion_angle(self, angle):
+        if angle > 180:
+            angle_norm = angle - 360
+        else:
+            angle_norm = angle
+        
+        servo_angle = 86 + (angle_norm * (42/180))
+
+        servo_int = int(round(servo_angle))
+        return servo_int
+    

@@ -34,4 +34,8 @@ class CGestion:
         #valides = [p for p in self.scan if p[2] > 0]
         return min(self.scan, key=lambda x: x[2]) #if valides else None
     
+    def get_obstacle_loin(self):
+        if not self.scan : return None
+        return max(self.scan, key=lambda x: x[2])
+    
     

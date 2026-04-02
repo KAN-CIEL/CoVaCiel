@@ -1,12 +1,13 @@
 import serial
 import threading
 import time
+import serial.tools.list_ports
 
 from CSignal_XBEE import CSignal
 from CCerveauVoiture import CCerveau
 
 class CCommunication:
-    def __init__(self, port="/dev/ttyACM0", baud=9600, timeout=0.1):
+    def __init__(self, port="/dev/ttyACM1", baud=9600, timeout=0.1):
         self.PORT = port
         self.BAUD = baud
         self.timeout = timeout
@@ -16,7 +17,7 @@ class CCommunication:
 
         self.CMD_EMISSION = {
             0x01: "PING", 0x02: "GET_DEBUG", 0x03: "GET_STATUS",
-            0x04: "GET_MOTEUR", 0x05: "SET_MOTEUR", 0x06: "IMU",
+            0x04: "GET_MOTEUR", 0x05: "SET_MOTEUR", 0x06: "GET_IMU",
             0x07: "SET_SERVO", 0x08: "GET_DISTANCE", 0x09: "GET_BATTERIE",
             0x0A: "GET_VITESSE", 0x0F: "RESET_ERREUR"
         }
