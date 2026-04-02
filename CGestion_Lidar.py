@@ -19,7 +19,7 @@ class CGestion:
         return self.scan
     """
 
-    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=8000, qualite_min=10, angle_min=90, angle_max=270):
+    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=4000, qualite_min=10, angle_min=90, angle_max=270):
         """ Filtre tout en un seul passage pour �conomiser le CPU """
         self.scan = [
             p for p in scan_brut 

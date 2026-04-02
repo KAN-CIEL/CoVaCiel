@@ -1,77 +1,96 @@
-
-
 from CDetection_Lidar import CDetection
 from CGestion_Lidar import CGestion
 
+import time
+import csv
+import datetime
+import os
 
 class CCerveau:
     def __init__(self):
-        
         self.lidar = CDetection()
         self.gestion_lidar = CGestion()
-        self.q, a, d = 0, 0, 0
         self.historique_obstacles = {}
-        self.angle_destination = 0
+        self.last_cmd_t = 0
+        self.cmd_interval = 0.05 # 20Hz
+        self.log_file = "lidar_logs.csv"
+        self._init_log_file()
     
+    def _init_log_file(self):
+        """ Écrase l'ancien fichier et écrit l'en-tête """
+        with open(self.log_file, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Timestamp", "Angle_Destination", "Distance_Max", "Obstacle_Proche_Dist", "Obstacle_Loin_Dist"])
+    
+    def log_data(self, angle_dest, dist_max, servo_cmd = "N/A", obs_proche_dist = "N/A", obs_loin_dist = "N/A"):
+        """ Enregistre les données dans le fichier CSV """
+        timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        with open(self.log_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([timestamp, f"{angle_dest:.1f}", dist_max, servo_cmd, obs_proche_dist, obs_loin_dist])
+
     def start_detection(self, signal, com):
         if self.lidar.start_lidar():
             com.start()
-            print("Analyse active. Mode Turbo engag�.")
+            print("Analyse active. Mode Navigation engagé. Logging actif.")
             try:
-                # On r�cup�re l'it�rateur
                 scans = self.lidar.lidar.iter_scans()
                 
-                while True:
+                # Variables persistantes pour le log si un scan est vide
+                angle_destination = 0.0
+                dist_max = 0
+                servo_val = 86
+
+                for scan in scans:
                     try:
-                        scan = next(scans)
+                        # 1. Filtrage
+                        self.gestion_lidar.filtrer_tout_en_un(scan)
                         
-                        # OPTIMISATION : On utilise la nouvelle fonction 1 seul passage
-                        obstacle_proche = self.gestion_lidar.filtrer_tout_en_un(scan)
-                        
-                        # On cherche le plus proche uniquement si on a des points
+                        # 2. Analyse des points
                         plus_proche = self.gestion_lidar.get_obstacle_proche()
                         plus_loin = self.gestion_lidar.get_obstacle_loin()
 
+                        d_proche_str = plus_proche[2] if plus_proche else "N/A"
+                        d_loin_str = plus_loin[2] if plus_loin else "N/A"
+
+                        t_now = time.time()
+
+                        # --- LOGIQUE DE SÉCURITÉ ---
                         if plus_proche:
-                            q, a, d = plus_proche
-                            self.historique_obstacles[d] = a
-                            
-                            if d < 250:
-                                print("!!! STOP : OBSTACLE !!!")
-                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
-                                #com.send_command(0x07, b'\x69\x00\x00\x00\x00\x00')
-                                #break
-                            #elif d >= 250:
-                                #print(com.send_command(0x05, b'\x1E\x00\x00\x00\x00\x00'))# Avancer
-                                #com.send_command(0x07, b'\x41\x00\x00\x00\x00\x00')
+                            q, a_proche, d_proche_val = plus_proche
+                            if d_proche_val < 200:
+                                print(f"!!! STOP : OBSTACLE à {d_proche_val}mm !!!")
+                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
+                                com.send_command(0x07, b'\x40\x00\x00\x00\x00\x00')
+                                self.log_data(0, 0, 86, d_proche_val, d_loin_str)
+                                continue
 
-                            if len(self.historique_obstacles) >= 10:
-                                angle_destination, dist_max = self.calcul_destination()
-                            
-                                #self.angle_destination, dist_max = self.calcul_destination()
-                                servo_angle = self.converssion_angle(angle_destination)
+                        # --- LOGIQUE DE NAVIGATION ---
+                        if t_now - self.last_cmd_t > self.cmd_interval:
+                            if plus_loin:
+                                q, angle_destination, dist_max = plus_loin
+                                servo_val = self.converssion_angle(angle_destination)
 
-                                trame = bytes([
-                                    servo_angle,
-                                    0x00,
-                                    0x00,
-                                    0x00,
-                                    0x00,
-                                    0x00
-                                ])
+                                # Envoi commandes ESP32
+                                trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
+                                com.send_command(0x07, trame_servo)
+                                com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00')
+                                
+                                print(f"Dest: {angle_destination:.1f}° | Servo: {servo_val} | Dist: {dist_max}mm")
 
-                                com.send_command(0x07, trame)
-
+                            self.last_cmd_t = t_now
                         
-                        # Verification signal XBEE
+                        # Logging systématique du scan
+                        self.log_data(angle_destination, dist_max, d_proche_str, d_loin_str)
+
+                        # Arrêt XBEE
                         msg = signal.read_signal()
                         if msg == "STOP": 
-                            com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')# STOP MOTEUR
+                            com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                             com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
                             break
 
-                    except ValueError: # Souvent l'erreur derriere "mismatch"
-                        print("Sync lost... purger le buffer")
+                    except ValueError:
                         self.lidar.lidar.clear_input()
                         continue
                         
@@ -79,26 +98,7 @@ class CCerveau:
                 print(f"Erreur majeure : {e}")
             finally:
                 self.lidar.stop_lidar()
-    
-    def stop_detection(self):
-        self.lidar.stop_lidar()
-    
-    def calcul_destination(self):
-        if not self.historique_obstacles: 
-            return 0, 0
-            
-        dist_max = max(self.historique_obstacles.keys())
-        angle_libre = self.historique_obstacles[dist_max]
-        
-        print(f"--- DESTINATION : Angle {angle_libre:.1f}� | Voie libre � {dist_max:.0f}mm ---")
-        
-        # LOGIQUE DE DIRECTION :
-        # Si angle entre 0 et 30 -> Tourner un peu � droite
-        # Si angle entre 330 et 360 -> Tourner un peu � gauche
-        # (A adapter selon le montage de ton LIDAR)
-        
-        self.historique_obstacles.clear()
-        return angle_libre, dist_max
+
 
     def converssion_angle(self, angle):
         if angle > 180:
@@ -106,8 +106,17 @@ class CCerveau:
         else:
             angle_norm = angle
         
-        servo_angle = 86 + (angle_norm * (42/180))
-
+        if angle_norm > 30:
+            return 106
+        elif angle_norm <-30:
+            return 64
+                
+        servo_angle = 86 + (angle_norm * (42 / 180))
+        
         servo_int = int(round(servo_angle))
-        return servo_int
-    
+        return max(64, min(106, servo_int))
+
+    def stop_detection(self):
+        self.lidar.stop_lidar()
+
+
