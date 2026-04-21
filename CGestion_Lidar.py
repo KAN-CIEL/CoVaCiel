@@ -19,7 +19,8 @@ class CGestion:
         return self.scan
     """
 
-    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=4000, qualite_min=10, angle_min=90, angle_max=270):
+    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=4000, qualite_min=10, 
+                           angle_min=90, angle_max=270):
         """ Filtre tout en un seul passage pour �conomiser le CPU """
         self.scan = [
             p for p in scan_brut 
@@ -28,6 +29,17 @@ class CGestion:
             and (p[1] <= angle_min or p[1] >= angle_max) # Angle (devant)
         ]
         return self.scan
+    
+    def get_secteurs(self):
+        gauche = [p[2] for p in self.scan if 210 <= p[1] <= 329]
+        droit = [p[2] for p in self.scan if 31 <= p[1] <= 130]
+        return gauche, droit
+
+    def pente_moyenne(self, distances):
+        if len(distances) < 2:
+            return 0
+        return (distances[-1] - distances[0]) / len(distances)
+
 
     def get_obstacle_proche(self):
         if not self.scan : return None
