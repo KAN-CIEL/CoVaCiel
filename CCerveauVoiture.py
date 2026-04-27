@@ -11,29 +11,34 @@ class CCerveau:
         self.lidar = CDetection()
         self.gestion_lidar = CGestion()
 
-        self.distance_arret = 300 # mm
-        self.SEUIL_PENTE = 120
-        self.SEUIL_MUR_INT = 550 # mm
+        self.distance_arret = 200 # mm
+        self.SEUIL_PENTE = 150
+        self.SEUIL_MUR_INT = 450 # mm
+        self.SEUIL_MUR_EXT = 300 # mm
 
-        self.historique_obstacles = {}
         self.last_cmd_t = 0
         self.cmd_interval = 0.05 # 20Hz (50ms)
-        self.etat_voie = "LIGNE DROITE"
+        self.etat_voie = "LIGNE_DROITE"
         self.log_file = "lidar_logs.csv"
+        
+        # Gain Proportionnel pour le centrage
+        self.Kp = 0.024 
+        self.Kd = 0.008
+        self.last_erreur = 0
         self._init_log_file()
     
     def _init_log_file(self):
-        """ Écrase l'ancien fichier et écrit l'en-tête """
+        """ Crée le fichier de log avec l'en-tête """
         with open(self.log_file, mode='w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["Timestamp", "Angle_Destination", "Distance_Max", "Obstacle_Proche_Dist", "Obstacle_Loin_Dist"])
+            writer.writerow(["Timestamp", "Etat", "Angle_Dest", "Servo", "Obs_Proche", "Obs_Loin"])
     
-    def log_data(self, angle_dest, dist_max, servo_cmd = "N/A", obs_proche_dist = "N/A", obs_loin_dist = "N/A"):
-        """ Enregistre les données dans le fichier CSV """
+    def log_data(self, etat, angle_dest, servo_val, obs_proche_dist, obs_loin_dist):
+        """ Enregistre les données dans le CSV """
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         with open(self.log_file, mode='a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([timestamp, f"{angle_dest:.1f}", dist_max, servo_cmd, obs_proche_dist, obs_loin_dist])
+            writer.writerow([timestamp, etat, f"{angle_dest:.1f}", servo_val, obs_proche_dist, obs_loin_dist])
 
     def start_detection(self, signal, com):
         if self.lidar.start_lidar():
@@ -42,95 +47,77 @@ class CCerveau:
             try:
                 scans = self.lidar.lidar.iter_scans()
                 
-                # Variables persistantes pour le log
                 angle_destination = 0.0
-                dist_max = 0
                 servo_val = 86
 
                 for scan in scans:
                     try:
-                        # 1. Filtrage
+                        # 1. Filtrage et Analyse
                         self.gestion_lidar.filtrer_tout_en_un(scan)
                         
-                        # 2. Analyse des points
                         plus_proche = self.gestion_lidar.get_obstacle_proche()
                         plus_loin = self.gestion_lidar.get_obstacle_loin()
                         gauche, droit = self.gestion_lidar.get_secteurs()
 
-                        pente_gauche = self.gestion_lidar.pente_moyenne(gauche)
                         pente_droite = self.gestion_lidar.pente_moyenne(droit)
 
-                        if abs(pente_gauche) < self.SEUIL_PENTE and abs(pente_droite) < self.SEUIL_PENTE:
-                            self.etat_voie = "LIGNE_DROITE"
-                        elif pente_droite > self.SEUIL_PENTE:
+                        # Détection de l'état de la voie
+                        if pente_droite > self.SEUIL_PENTE:
                             self.etat_voie = "COURBE_GAUCHE"
                         elif pente_droite < -self.SEUIL_PENTE:
                             self.etat_voie = "COURBE_DROITE"
                         else:
                             self.etat_voie = "LIGNE_DROITE"
 
-                        d_proche_str = plus_proche[2] if plus_proche else "N/A"
-                        d_loin_str = plus_loin[2] if plus_loin else "N/A"
-
                         t_now = time.time()
 
-                        # --- LOGIQUE DE SÉCURITÉ ---
+                        # --- LOGIQUE DE SÉCURITÉ (STOP) ---
                         if plus_proche:
-                            q, a_proche, d_proche_val = plus_proche
+                            _, _, d_proche_val = plus_proche
                             if d_proche_val < self.distance_arret:
-                                print(f"!!! STOP : OBSTACLE À {d_proche_val}mm !!!")
+                                print(f"!!! STOP : {d_proche_val}mm !!!")
                                 com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00') # 86 en hexa (centre)
-                                self.log_data(0, 0, 86, d_proche_val, d_loin_str)
+                                com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
                                 continue
 
-                        # --- LOGIQUE DE NAVIGATION (20Hz) ---
+                        # --- LOGIQUE DE NAVIGATION OPTIMISÉE (20Hz) ---
                         if t_now - self.last_cmd_t > self.cmd_interval:
-                            if plus_loin:
-                                mur_exterieur = 1500
-                                angle_base = 0
+                            
+                            # Calcul de l'erreur de centrage
+                            angle_centre = self.calc_angle_centre(gauche, droit)
+                            
+                            # Détermination de la cible selon l'état de la voie
+                            if self.etat_voie == "LIGNE_DROITE":
+                                target = angle_centre
+                            elif self.etat_voie == "COURBE_GAUCHE":
+                                target = -25 + angle_centre
+                            elif self.etat_voie == "COURBE_DROITE":
+                                target = 25 + angle_centre
+                            
+                            # Lissage de l'angle (Filtre passe-bas : 60% ancienne valeur, 40% nouvelle)
+                            angle_destination = (angle_destination * 0.6) + (target * 0.4)
 
-                                # Détection grand virage vide
-                                if self.etat_voie == "COURBE_GAUCHE":
-                                    if gauche and (sum(gauche)/len(gauche)) > mur_exterieur:
-                                        angle_base = -30
-                                elif self.etat_voie == "COURBE_DROITE":
-                                    if droit and (sum(droit)/len(droit)) > mur_exterieur:
-                                        angle_base = 30
+                            # Bornage final et Conversion
+                            angle_destination = max(-25, min(25, angle_destination))
+                            servo_val = self.conversion_angle(angle_destination)
 
-                                # Calcul des composantes d'angle
-                                angle_centre = self.calc_angle_centre(gauche, droit)
-                                angle_virage = self.calc_angle_virage(self.etat_voie)
-                                angle_decal = self.calc_angle_decalage(self.etat_voie, gauche, droit)
-
-                                # Fusion des décisions
-                                if angle_base != 0:
-                                    angle_destination = angle_base + angle_decal
-                                else:
-                                    angle_destination = angle_centre + angle_virage + angle_decal
-
-                                # Limitation finale (-30° à +30°)
-                                angle_destination = max(-30, min(30, angle_destination))
-
-                                # Conversion en valeur Servo (64-106)
-                                servo_val = self.converssion_angle(angle_destination)
-
-                                # ENVOI UNIQUE DES COMMANDES
-                                trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
-                                com.send_command(0x07, trame_servo)
-                                com.send_command(0x05, b'\x1A\x00\x00\x00\x00\x00') # Vitesse constante
-
-                                q, angle_loin, dist_max = plus_loin
-                                print(f"Dest: {angle_destination:.1f}° | Servo: {servo_val} | Dist: {dist_max}mm")
+                            # Envoi des commandes
+                            trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
+                            com.send_command(0x07, trame_servo)
+                            if self.etat_voie == "LIGNE_DROITE":
+                                com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse stable
+                            elif self.etat_voie == "COURBE_GAUCHE" or self.etat_voie == "COURBE_DROITE":
+                                com.send_command(0x05, b'\x1a\x00\x00\x00\x00\x00') # Légèrement plus lent pour les courbes
 
                             self.last_cmd_t = t_now
-                        
-                        # Logging
-                        self.log_data(angle_destination, dist_max, servo_val, d_proche_str, d_loin_str)
+                            
+                            # Log des données
+                            d_p = plus_proche[2] if plus_proche else "N/A"
+                            d_l = plus_loin[2] if plus_loin else "N/A"
+                            self.log_data(self.etat_voie, angle_destination, servo_val, d_p, d_l)
 
-                        # Arrêt XBEE
-                        msg = signal.read_signal()
-                        if msg == "STOP": 
+                        # Signal d'arrêt externe
+                        if signal.read_signal() == "STOP": 
                             com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                             com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
                             break
@@ -144,42 +131,27 @@ class CCerveau:
             finally:
                 self.lidar.stop_lidar()
 
-    def converssion_angle(self, angle):
-        """ Mappe -30°/+30° vers 64/106 (Centre 86) """
+    def conversion_angle(self, angle):
+        """ Mappe -30°/+30° vers 62/109 (Milieu 86) """
         angle_norm = max(-30, min(30, angle))
-        # Ratio : (106-86)/30 = 0.666
-        servo_angle = 86 + (angle_norm * (20 / 30))
-        final_val = int(round(servo_angle))
-        return max(64, min(106, final_val))
+        servo_angle = 86 + (angle_norm * (27 / 30))
+        return max(62, min(109, int(round(servo_angle))))
     
     def calc_angle_centre(self, gauche, droit):
-        if not gauche or not droit:
+        """ Calcule l'erreur de centrage (Proportionnel) """
+        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
             return 0
-        d_g = sum(gauche)/len(gauche)
-        d_d = sum(droit)/len(droit)
-        if d_g > d_d:
-            return -30 # Aller à gauche
-        elif d_g < d_d:
-            return 30  # Aller à droite
-        return 0
+        
+        moy_g = sum(gauche)/len(gauche)
+        moy_d = sum(droit)/len(droit)
+        
+        erreur = moy_g - moy_d
 
-    def calc_angle_virage(self, etat):
-        if etat == "COURBE_GAUCHE":
-            return -5
-        if etat == "COURBE_DROITE":
-            return 5
-        return 0
-    
-    def calc_angle_decalage(self, etat, gauche, droit):
-        if etat == "COURBE_GAUCHE":
-            moy_d = sum(droit)/len(droit) if droit else 0
-            if moy_d > self.SEUIL_MUR_INT:
-                return 10
-        if etat == "COURBE_DROITE":
-            moy_g = sum(gauche)/len(gauche) if gauche else 0
-            if moy_g > self.SEUIL_MUR_INT:
-                return -10
-        return 0
+        derivee = erreur - self.last_erreur
+        self.last_erreur = erreur
+
+        commande = (erreur * self.Kp) + (derivee * self.Kd)
+        return -commande
 
     def stop_detection(self):
         self.lidar.stop_lidar()
