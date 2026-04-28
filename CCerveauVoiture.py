@@ -11,7 +11,7 @@ class CCerveau:
         self.lidar = CDetection()
         self.gestion_lidar = CGestion()
 
-        self.distance_arret = 0 # mm
+        self.distance_arret = 200 # mm
         self.distances_urgence = 400
         self.SEUIL_MUR_INT = 450 # mm
         self.SEUIL_MUR_EXT = 300 # mm
@@ -71,12 +71,33 @@ class CCerveau:
                         t_now = time.time()
 
                         # --- LOGIQUE DE SÉCURITÉ (STOP) ---
+                        #if plus_proche:
+                            #_, _, d_proche_val = plus_proche
+                            #if d_proche_val < self.distance_arret:
+                                #print(f"!!! STOP : {d_proche_val}mm !!!")
+                                #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
+                                #com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
+                                #continue
+                        
                         if plus_proche:
+
+                            moyenne_d = 1000
+
+                            champ_libre = com.send_command(0x08, b'\x00\x00\x00\x00\x00\x00') # Hypothétique commande pour lire un capteur de champ libre à l'avant
+                            if champ_libre and len(champ_libre) >= 6:
+                                val1 = champ_libre[0] << 8 | champ_libre[1]
+                                val2 = champ_libre[2] << 8 | champ_libre[3]
+                                val3 = champ_libre[4] << 8 | champ_libre[5]
+
+                                moyenne_d = (val1 + val2 + val3) / 3
+                                    
                             _, _, d_proche_val = plus_proche
-                            if d_proche_val < self.distance_arret:
+
+                            if d_proche_val < self.distance_arret :
                                 print(f"!!! STOP : {d_proche_val}mm !!!")
-                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
+                                com.send_command(0x05, b'\xef\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
+                                self.temps_fin_recul = t_now + 2.5
                                 continue
                         
 
@@ -126,6 +147,15 @@ class CCerveau:
                                     com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse stable
                                 else:
                                     com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
+                                
+                                #if hasattr(self, 'temps_fin_recul') and t_now < self.temps_fin_recul:
+                                    # REMPLACE \xXX par l'octet qui correspond � ta marche arri�re (ex: \xE6 ou \x85)
+                                    #com.send_command(0x05, b'\x9e\x00\x00\x00\x00\x00') # Vitesse recul
+                                    #com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00') # Roues droites (86)
+                                    #self.last_cmd_t = t_now
+                                    #continue # On saute la navigation tant qu'on recule !
+
+                                
 
                                 self.last_cmd_t = t_now
                                 
