@@ -11,8 +11,8 @@ class CCerveau:
         self.lidar = CDetection()
         self.gestion_lidar = CGestion()
 
-        self.distance_arret = 200 # mm
-        self.SEUIL_PENTE = 150
+        self.distance_arret = 0 # mm
+        self.distances_urgence = 400
         self.SEUIL_MUR_INT = 450 # mm
         self.SEUIL_MUR_EXT = 300 # mm
 
@@ -21,10 +21,18 @@ class CCerveau:
         self.etat_voie = "LIGNE_DROITE"
         self.log_file = "lidar_logs.csv"
         
-        # Gain Proportionnel pour le centrage
-        self.Kp = 0.024 
-        self.Kd = 0.008
-        self.last_erreur = 0
+        # Gains Proportionnels pour le centrage (Ligne Droite)
+        self.Kp_centre = 0.036 
+        self.Ki_centre = 0.001
+        self.Kd_centre = 0.008
+        
+        # Mémoires séparées pour éviter les coups de raquette
+        self.last_erreur_centre = 0
+        self.somme_erreur_centre = 0
+
+        self.last_erreur_mur = 0
+        self.somme_erreur_mur = 0
+        
         self._init_log_file()
     
     def _init_log_file(self):
@@ -49,6 +57,7 @@ class CCerveau:
                 
                 angle_destination = 0.0
                 servo_val = 86
+                t_debut_virage = 0 # Mémoire pour le verrouillage du virage
 
                 for scan in scans:
                     try:
@@ -58,16 +67,6 @@ class CCerveau:
                         plus_proche = self.gestion_lidar.get_obstacle_proche()
                         plus_loin = self.gestion_lidar.get_obstacle_loin()
                         gauche, droit = self.gestion_lidar.get_secteurs()
-
-                        pente_droite = self.gestion_lidar.pente_moyenne(droit)
-
-                        # Détection de l'état de la voie
-                        if pente_droite > self.SEUIL_PENTE:
-                            self.etat_voie = "COURBE_GAUCHE"
-                        elif pente_droite < -self.SEUIL_PENTE:
-                            self.etat_voie = "COURBE_DROITE"
-                        else:
-                            self.etat_voie = "LIGNE_DROITE"
 
                         t_now = time.time()
 
@@ -79,42 +78,61 @@ class CCerveau:
                                 com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                                 com.send_command(0x07, b'\x56\x00\x00\x00\x00\x00')
                                 continue
+                        
+
 
                         # --- LOGIQUE DE NAVIGATION OPTIMISÉE (20Hz) ---
-                        if t_now - self.last_cmd_t > self.cmd_interval:
+                            if t_now - self.last_cmd_t > self.cmd_interval:
                             
-                            # Calcul de l'erreur de centrage
-                            angle_centre = self.calc_angle_centre(gauche, droit)
-                            
-                            # Détermination de la cible selon l'état de la voie
-                            if self.etat_voie == "LIGNE_DROITE":
-                                target = angle_centre
-                            elif self.etat_voie == "COURBE_GAUCHE":
-                                target = -25 + angle_centre
-                            elif self.etat_voie == "COURBE_DROITE":
-                                target = 25 + angle_centre
-                            
-                            # Lissage de l'angle (Filtre passe-bas : 60% ancienne valeur, 40% nouvelle)
-                            angle_destination = (angle_destination * 0.6) + (target * 0.4)
+                                # 1. Quel est l'�tat th�orique de la route devant nous ?
+                                nouvel_etat = self.calc_virage(gauche, droit)
 
-                            # Bornage final et Conversion
-                            angle_destination = max(-25, min(25, angle_destination))
-                            servo_val = self.conversion_angle(angle_destination)
+                                # 2. ANTI-ZIGZAG : On verrouille la SORTIE de virage pendant 0.8s, 
+                                # mais on n'emp�che jamais d'ENTRER dans un virage.
+                                en_virage_verrouille = (self.etat_voie in ["COURBE_DROITE", "COURBE_GAUCHE"]) and (t_now - t_debut_virage < 0.8)
 
-                            # Envoi des commandes
-                            trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
-                            com.send_command(0x07, trame_servo)
-                            if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse stable
-                            elif self.etat_voie == "COURBE_GAUCHE" or self.etat_voie == "COURBE_DROITE":
-                                com.send_command(0x05, b'\x1a\x00\x00\x00\x00\x00') # Légèrement plus lent pour les courbes
+                                if en_virage_verrouille:
+                                    pass # On maintient l'�tat de courbe actuel
+                                elif nouvel_etat != self.etat_voie:
+                                    self.etat_voie = nouvel_etat
+                                    if self.etat_voie != "LIGNE_DROITE":
+                                        t_debut_virage = t_now # Lance le chrono du virage
 
-                            self.last_cmd_t = t_now
-                            
-                            # Log des données
-                            d_p = plus_proche[2] if plus_proche else "N/A"
-                            d_l = plus_loin[2] if plus_loin else "N/A"
-                            self.log_data(self.etat_voie, angle_destination, servo_val, d_p, d_l)
+                                # 3. Calcul de la cible (PID)
+                                if self.etat_voie == "COURBE_DROITE":
+                                    # Braquage de base (25�) + PID d'�vitement du mur droit
+                                    target = -25 + self.calc_angle_mur(droit, cote="DROIT")
+                                
+                                elif self.etat_voie == "COURBE_GAUCHE":
+                                    # Braquage de base (-25�) + PID d'�vitement du mur gauche
+                                    target = 25 + self.calc_angle_mur(gauche, cote="GAUCHE")
+                                
+                                else: # LIGNE_DROITE
+                                    # PID de centrage
+                                    target = self.calc_angle_centre(gauche, droit)
+
+                                # 4. Lissage passe-bas (40% ancienne valeur, 60% nouvelle = tr�s r�actif)
+                                angle_destination = (angle_destination * 0.4) + (target * 0.6)
+
+                                # Bornage final et Conversion
+                                angle_destination = max(-30, min(30, angle_destination))
+                                servo_val = self.conversion_angle(angle_destination)
+
+                                # Envoi des commandes
+                                trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
+                                com.send_command(0x07, trame_servo)
+                                
+                                if self.etat_voie == "LIGNE_DROITE":
+                                    com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse stable
+                                else:
+                                    com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
+
+                                self.last_cmd_t = t_now
+                                
+                                # Log des donn�es
+                                d_p = plus_proche[2] if plus_proche else "N/A"
+                                d_l = plus_loin[2] if plus_loin else "N/A"
+                                self.log_data(self.etat_voie, angle_destination, servo_val, d_p, d_l)
 
                         # Signal d'arrêt externe
                         if signal.read_signal() == "STOP": 
@@ -147,11 +165,65 @@ class CCerveau:
         
         erreur = moy_g - moy_d
 
-        derivee = erreur - self.last_erreur
-        self.last_erreur = erreur
+        self.somme_erreur_centre += erreur
 
-        commande = (erreur * self.Kp) + (derivee * self.Kd)
+        self.somme_erreur_centre = max(-1000, min(1000, self.somme_erreur_centre))
+
+        derivee = erreur - self.last_erreur_centre
+        self.last_erreur_centre = erreur    
+
+        commande = (erreur * self.Kp_centre) + (self.somme_erreur_centre * self.Ki_centre) + (derivee * self.Kd_centre)
         return -commande
+    
+    def calc_virage(self, gauche, droit):
+        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
+            return "LIGNE_DROITE"
+        
+        moy_g = sum(gauche) / len(gauche)
+        moy_d = sum(droit) / len(droit)
+
+        DIFF_VIRAGE = 300
+
+        if moy_g - moy_d > DIFF_VIRAGE:
+            return "COURBE_DROITE"
+        elif moy_d - moy_g > DIFF_VIRAGE:
+            return "COURBE_GAUCHE"
+            
+        return "LIGNE_DROITE"
+
+    def calc_angle_mur(self, distances, cote="GAUCHE"):
+        """ Agit comme un bouclier repoussant si on s'approche trop du mur intérieur """
+        if not distances or len(distances) == 0:
+            return 0
+        
+        moyenne_distances = sum(distances) / len(distances)
+        
+        # 150mm : On laisse la voiture frôler le mur dans le virage de 1 mètre
+        distance_securite = 150.0 
+        
+        if moyenne_distances > distance_securite:
+            self.last_erreur_mur = 0
+            self.somme_erreur_mur = 0
+            return 0
+            
+        erreur = distance_securite - moyenne_distances 
+        
+        Kp_repulsion = 0.08
+        Ki_repulsion = 0.005
+        Kd_repulsion = 0.02
+
+        self.somme_erreur_mur += erreur
+        self.somme_erreur_mur = max(-500, min(500, self.somme_erreur_mur))
+        
+        derivee = erreur - self.last_erreur_mur
+        self.last_erreur_mur = erreur
+        
+        force_repulsion = (erreur * Kp_repulsion) + (self.somme_erreur_mur * Ki_repulsion) + (derivee * Kd_repulsion)
+
+        if cote == "GAUCHE":
+            return force_repulsion
+        else:
+            return -force_repulsion
 
     def stop_detection(self):
         self.lidar.stop_lidar()
