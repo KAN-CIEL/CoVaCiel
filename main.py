@@ -1,6 +1,7 @@
 from CCerveauVoiture import CCerveau
 from CCommunication_UART import CCommunication
 from CSignal_XBEE import CSignal
+from CEnregistrement import EnregistreurCovaciel 
 
 import time
 import logging
@@ -11,6 +12,7 @@ if __name__ == "__main__":
     Brain = CCerveau()
     com = CCommunication()
     signal = CSignal()
+    recorder = EnregistreurCovaciel()
 
     #com.start()
     

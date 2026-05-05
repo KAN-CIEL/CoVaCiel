@@ -1,7 +1,7 @@
 import serial
 
 class CSignal:
-    def __init__(self, port='/dev/ttyUSB0', baud=9600, timeout=0.1):
+    def __init__(self, port='/dev/ttyUSB1', baud=9600, timeout=0.1):
         self.PORT = port
         self.BAUD = baud
         self.timeout = timeout
