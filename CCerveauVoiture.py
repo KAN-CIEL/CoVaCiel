@@ -99,6 +99,8 @@ class CCerveau:
                             _, _, d_proche_val = plus_proche
 
                             if d_proche_val < self.distance_arret :
+                                recul_val = 0x56
+                                
                                 if self.etat_voie == "COURBE_GAUCHE":
                                     recul_val = 0x3e
                                 elif self.etat_voie == "COURBE_DROITE":
@@ -134,6 +136,10 @@ class CCerveau:
                                     pass # On maintient l'�tat de courbe actuel
                                 elif nouvel_etat != self.etat_voie:
                                     self.etat_voie = nouvel_etat
+                                    self.somme_erreur_centre = 0
+                                    self.last_erreur_centre = 0
+
+
                                     if self.etat_voie != "LIGNE_DROITE":
                                         t_debut_virage = t_now # Lance le chrono du virage
 
@@ -151,7 +157,10 @@ class CCerveau:
                                     target = self.calc_angle_centre(gauche, droit)
 
                                 # 4. Lissage passe-bas (40% ancienne valeur, 60% nouvelle = tr�s r�actif)
-                                angle_destination = (angle_destination * 0.7) + (target * 0.3)
+                                if self.etat_voie == "LIGNE_DROITE":
+                                    angle_destination = (angle_destination * 0.3) + (target * 0.7)
+                                else:
+                                    angle_destination = (angle_destination * 0.6) + (target * 0.4)
 
                                 # Bornage final et Conversion
                                 angle_destination = max(-30, min(30, angle_destination))
@@ -165,7 +174,7 @@ class CCerveau:
                                     com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable
                                 else:
                                     com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                    com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
+                                    com.send_command(0x05, b'\x19\x00\x1e\x00\x00\x00') # Vitesse virage
                                 
                                 #if hasattr(self, 'temps_fin_recul') and t_now < self.temps_fin_recul:
                                     # REMPLACE \xXX par l'octet qui correspond � ta marche arri�re (ex: \xE6 ou \x85)
@@ -234,8 +243,8 @@ class CCerveau:
         plus_loin = self.gestion_lidar.get_obstacle_loin()
         dist_devant = plus_loin[2] if plus_loin else 4000
 
-        DIFF_VIRAGE = 600
-        SEUIL_DECLENCHEMENT_FRONTAL = 2500
+        DIFF_VIRAGE = 700
+        SEUIL_DECLENCHEMENT_FRONTAL = 3700
 
         if moy_g - moy_d > DIFF_VIRAGE and (dist_devant < SEUIL_DECLENCHEMENT_FRONTAL):
             return "COURBE_DROITE"

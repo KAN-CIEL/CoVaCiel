@@ -36,65 +36,50 @@ class EnregistreurCovaciel:
             except: pass
         return "null", "null"
 
-    def sauvegarder_trame(self, code_cmd, data_bytes, lidar_val=0):
-        """
-        Sauvegarde une trame UART/SPI dans la base de données.
-        code_cmd : 0x05 (Moteur), 0x07 (Servo), 0x8A (Vitesse), etc.
-        data_bytes : La liste des octets de données (payload)
-        """
+
+    def sauvegarder_trame(self, code_cmd, data_bytes):
         if not self.conn: return
-
-        # Valeurs par défaut
-        vitesse = 0.0
-        angle = 86  # Valeur neutre par défaut
         
-        # --- ANALYSE DES TRAMES  ---
-        if code_cmd == 0x05: # SET_MOTEUR : data_bytes[0] est la vitesse
-            vitesse = data_bytes[0]
-        
-        elif code_cmd == 0x07: # SET_SERVO : data_bytes[0] est l'angle
-            angle = data_bytes[0]
-            
-        elif code_cmd == 0x8A: # VITESSE 
-            vitesse = data_bytes[0] # Extraction simplifiée pour l'exemple
+        # 1. LE MOUCHARD : Si cette ligne ne s'affiche pas dans ton terminal, 
+        # c'est que main.py n'envoie RIEN à la base de données !
+        print(f"[DEBUG BDD] Tentative de sauvegarde -> Code: {code_cmd} | Data: {data_bytes}")
 
-        # Récupération des données IA
+        vitesse, angle, tension = 0.0, 50, 0.0
+        
+        # 2. LA SÉCURITÉ : On vérifie qu'il y a bien des octets avant de lire data_bytes[0]
+        if isinstance(data_bytes, (list, bytes, bytearray)) and len(data_bytes) > 0:
+            if code_cmd == 0x84 or code_cmd == 0x05: # MOTEUR
+                vitesse = data_bytes[0]
+            elif code_cmd == 0x86 or code_cmd == 0x07: # SERVO/ANGLE
+                angle = data_bytes[0]
+            elif code_cmd == 0x89 or code_cmd == 0x09: # BATTERIE
+                tension = data_bytes[0] / 10.0 
+            elif code_cmd == 0x8A or code_cmd == 0x0A: # VITESSE REELLE
+                vitesse = data_bytes[0]
+
         vert, rouge = self.lire_ia_couleur()
 
         try:
-            # 1. Insertion Physique (Vitesse, Direction, Lidar)
-            self.cursor.execute(
-                "INSERT INTO mesures_physiques (vitesse_kmh, direction, lidar) VALUES (%s, %s, %s)",
-                (vitesse, angle, lidar_val)
-            )
+            self.cursor.execute("INSERT INTO Mesures_Physiques (vitesse_kmh, angle) VALUES (%s, %s)", (vitesse, angle))
             id_p = self.cursor.lastrowid
 
-            # 2. Insertion Couleur (IA)
-            self.cursor.execute(
-                "INSERT INTO mesures_couleur (obstacle_vert, obstacle_rouge) VALUES (%s, %s)",
-                (vert, rouge)
-            )
+            self.cursor.execute("INSERT INTO Mesures_Electriques (batterie_tension) VALUES (%s)", (tension,))
+            id_e = self.cursor.lastrowid
+
+            self.cursor.execute("INSERT INTO Mesures_couleur (obstacle_vert, obstacle_rouge) VALUES (%s, %s)", (vert, rouge))
             id_c = self.cursor.lastrowid
 
-            # 3. Insertion Globale (Lien entre tout)
-            self.cursor.execute(
-                "INSERT INTO mesures_globales (id_session, id_physique, id_couleur) VALUES (%s, %s, %s)",
-                (self.id_session, id_p, id_c)
-            )
+            self.cursor.execute("INSERT INTO Mesures_Globales (id_session, id_physique, id_electrique, id_couleur) VALUES (%s, %s, %s, %s)", 
+                                (self.id_session, id_p, id_e, id_c))
             self.conn.commit()
+            print(f"[BDD] Ligne enregistrée avec succès !")
         except Exception as e:
-            print(f"[SQL ERROR] Échec de l'enregistrement : {e}")
+            print(f"[SQL Error] : {e}")
 
     def fermer(self):
         if self.conn:
             self.cursor.close()
             self.conn.close()
 
-if __name__ == "__main__":
-    # Test manuel de la classe
-    test = EnregistreurCovaciel()
-    print("Tentative d'enregistrement de test...")
-    # On simule une trame moteur (0x05) avec une vitesse de 15
-    test.sauvegarder_trame(0x05, [15, 0, 0, 0, 0])
-    print("Test terminé, vérifie phpMyAdmin !")
-    test.fermer()
+
+    

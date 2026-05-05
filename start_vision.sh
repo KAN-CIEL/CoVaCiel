@@ -31,4 +31,4 @@ sleep 2
 
 # Et enfin, on lance ton script principal au premier plan pour voir les logs SQL !
 echo "[4/4] Lancement de l'Enregistrement Global (I2C + IA -> MariaDB)..."
-python3 enregistrement3.py
+python3 CEnregistrement.py
