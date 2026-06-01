@@ -5,7 +5,7 @@ class CDetection:
     def __init__(self):
 
         self.lidar = None
-        self.PORT = '/dev/ttyUSB0'
+        self.PORT = '/dev/ttyUSB1'
         self.BAUDERATE = 256000
         self.timeout = 3
     

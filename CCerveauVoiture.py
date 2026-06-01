@@ -25,18 +25,17 @@ class CCerveau:
         self.etat_voie = "LIGNE_DROITE"
         self.log_file = "lidar_logs.csv"
 
-        # Gains Proportionnels pour le centrage (Ligne Droite)
+        # Gains PID pour le centrage (Ligne Droite)
+        # I et D sont normalises par dt : valeurs rescalees pour rester
+        # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
         self.Kp_centre = 0.036
-        self.Ki_centre = 0.001
-        self.Kd_centre = 0.008
+        self.Ki_centre = 0.02
+        self.Kd_centre = 0.0004
 
         # Memoires separees pour eviter les coups de raquette
         self.last_erreur_centre = 0
         self.somme_erreur_centre = 0
         self.recul_val = 0
-
-        self.last_erreur_mur = 0
-        self.somme_erreur_mur = 0
 
         self.DISTANCE_CIBLE_VIRAGE = 200
         self.Kp_mur = 0.05
@@ -111,7 +110,7 @@ class CCerveau:
 
                                 print(f"!!! STOP : {d_proche_val}mm !!!")
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
-                                com.send_command(0x05, b'\xe8\x00\x00\x00\x00\x00') #recul
+                                com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
                                 self.temps_fin_recul = t_now + 2.5
                                 continue
@@ -119,6 +118,11 @@ class CCerveau:
                         # --- LOGIQUE DE NAVIGATION (20Hz) ---
                         # Desormais executee a CHAQUE scan, qu'il y ait un obstacle proche ou non.
                         if t_now - self.last_cmd_t > self.cmd_interval:
+
+                            # dt reel depuis le dernier calcul (garde-fou : 1ere iteration ou trou de scan)
+                            dt = t_now - self.last_cmd_t
+                            if dt <= 0 or dt > 0.5:
+                                dt = self.cmd_interval
 
                             # 1. Quel est l'etat theorique de la route devant nous ?
                             nouvel_etat = self.calc_virage(gauche, droit)
@@ -133,6 +137,9 @@ class CCerveau:
                                 pass # On maintient l'etat de courbe actuel
                             elif nouvel_etat != self.etat_voie:
                                 self.etat_voie = nouvel_etat
+                                # Anti-windup : on repart d'une integrale propre a chaque changement d'etat
+                                self.somme_erreur_centre = 0
+                                self.last_erreur_centre = 0
                                 if self.etat_voie != "LIGNE_DROITE":
                                     t_debut_virage = t_now # Lance le chrono du virage
 
@@ -147,7 +154,7 @@ class CCerveau:
 
                             else: # LIGNE_DROITE
                                 # PID de centrage
-                                target = self.calc_angle_centre(gauche, droit)
+                                target = self.calc_angle_centre(gauche, droit, dt)
 
                             # 4. Lissage passe-bas (70% ancienne valeur, 30% nouvelle)
                             angle_destination = (angle_destination * 0.7) + (target * 0.3)
@@ -164,9 +171,9 @@ class CCerveau:
                             com.send_command(0x07, trame_servo)
 
                             if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x1E\x00\x1e\x00\x00\x00') # Vitesse stable
+                                com.send_command(0x05, b'\x1e\x00\x1e\x00\x00\x00') # Vitesse stable
                             else:
-                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
+                                #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                                 com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
 
                             self.last_cmd_t = t_now
@@ -232,8 +239,8 @@ class CCerveau:
         servo_angle = 86 + (angle_norm * (27 / 30))
         return max(62, min(109, int(round(servo_angle))))
 
-    def calc_angle_centre(self, gauche, droit):
-        """ Calcule l'erreur de centrage (Proportionnel) """
+    def calc_angle_centre(self, gauche, droit, dt):
+        """ Calcule l'erreur de centrage (PID normalise par dt) """
         if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
             return 0
 
@@ -242,11 +249,12 @@ class CCerveau:
 
         erreur = moy_g - moy_d
 
-        self.somme_erreur_centre += erreur
+        # Integrale en erreur.secondes (clamp ramene a +/-50 pour un effet equivalent a l'ancien +/-1000)
+        self.somme_erreur_centre += erreur * dt
+        self.somme_erreur_centre = max(-50, min(50, self.somme_erreur_centre))
 
-        self.somme_erreur_centre = max(-1000, min(1000, self.somme_erreur_centre))
-
-        derivee = erreur - self.last_erreur_centre
+        # Derivee en erreur/seconde
+        derivee = (erreur - self.last_erreur_centre) / dt if dt > 0 else 0
         self.last_erreur_centre = erreur
 
         commande = (erreur * self.Kp_centre) + (self.somme_erreur_centre * self.Ki_centre) + (derivee * self.Kd_centre)
@@ -270,40 +278,6 @@ class CCerveau:
             return "COURBE_GAUCHE"
 
         return "LIGNE_DROITE"
-
-    def calc_angle_mur(self, distances, cote="GAUCHE"):
-        """ Agit comme un bouclier repoussant si on s'approche trop du mur interieur """
-        if not distances or len(distances) == 0:
-            return 0
-
-        moyenne_distances = sum(distances) / len(distances)
-
-        # 150mm : On laisse la voiture froler le mur dans le virage de 1 metre
-        distance_securite = 150.0
-
-        if moyenne_distances > distance_securite:
-            self.last_erreur_mur = 0
-            self.somme_erreur_mur = 0
-            return 0
-
-        erreur = distance_securite - moyenne_distances
-
-        Kp_repulsion = 0.08
-        Ki_repulsion = 0.005
-        Kd_repulsion = 0.02
-
-        self.somme_erreur_mur += erreur
-        self.somme_erreur_mur = max(-500, min(500, self.somme_erreur_mur))
-
-        derivee = erreur - self.last_erreur_mur
-        self.last_erreur_mur = erreur
-
-        force_repulsion = (erreur * Kp_repulsion) + (self.somme_erreur_mur * Ki_repulsion) + (derivee * Kd_repulsion)
-
-        if cote == "GAUCHE":
-            return force_repulsion
-        else:
-            return -force_repulsion
 
     def calc_angle_suivi_mur(self, distances, cote="GAUCHE"):
         """
