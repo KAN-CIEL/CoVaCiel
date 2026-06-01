@@ -28,16 +28,16 @@ class CCerveau:
         # Gains PID pour le centrage (Ligne Droite)
         # I et D sont normalises par dt : valeurs rescalees pour rester
         # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
-        self.Kp_centre = 0.036
+        self.Kp_centre = 0.028    # moins de gain proportionnel (anti-oscillation a haute vitesse)
         self.Ki_centre = 0.02
-        self.Kd_centre = 0.0004
+        self.Kd_centre = 0.0012   # plus d'amortissement (freine les ondulations)
 
         # Memoires separees pour eviter les coups de raquette
         self.last_erreur_centre = 0
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        self.DISTANCE_CIBLE_VIRAGE = 200
+        self.DISTANCE_CIBLE_VIRAGE = 320   # 32 cm du mur interieur (au lieu de 20)
         self.Kp_mur = 0.05
 
         #enregistrement
@@ -266,15 +266,27 @@ class CCerveau:
 
         moy_g = sum(gauche) / len(gauche)
         moy_d = sum(droit) / len(droit)
+        diff = moy_g - moy_d   # > 0 : mur gauche plus loin -> virage a DROITE
 
         dist_devant = self.gestion_lidar.get_distance_frontale()
 
-        DIFF_VIRAGE = 600
-        SEUIL_DECLENCHEMENT_FRONTAL = 2500
+        SEUIL_ENTREE = 600     # asymetrie pour ENTRER en virage
+        SEUIL_SORTIE = 250     # asymetrie pour SORTIR (hysteresis : plus bas)
+        SEUIL_FRONTAL = 2500
 
-        if moy_g - moy_d > DIFF_VIRAGE and (dist_devant < SEUIL_DECLENCHEMENT_FRONTAL):
+        # Hysteresis : une fois en virage, on y RESTE tant que l'asymetrie reste
+        # marquee. Empeche le clignotement COURBE/LIGNE au milieu d'un virage.
+        if self.etat_voie == "COURBE_DROITE":
+            if diff > SEUIL_SORTIE:
+                return "COURBE_DROITE"
+        elif self.etat_voie == "COURBE_GAUCHE":
+            if -diff > SEUIL_SORTIE:
+                return "COURBE_GAUCHE"
+
+        # Conditions d'ENTREE (la distance frontale ne sert qu'a anticiper l'entree)
+        if diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
             return "COURBE_DROITE"
-        elif moy_d - moy_g > DIFF_VIRAGE and (dist_devant < SEUIL_DECLENCHEMENT_FRONTAL):
+        elif -diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
             return "COURBE_GAUCHE"
 
         return "LIGNE_DROITE"
