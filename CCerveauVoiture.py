@@ -42,16 +42,6 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        self.DISTANCE_CIBLE_VIRAGE = 450   # distance cible au mur INTERIEUR en virage (mm)
-        self.BASE_COURBE = 18              # braquage de fond du virage (anticipation, deg)
-        # Regulateur PID du suivi de mur : P=reaction, I=precision (annule l'erreur
-        # statique), D=stabilite (amortit). I et D sont normalises par dt.
-        self.Kp_mur = 0.05
-        self.Ki_mur = 0.015
-        self.Kd_mur = 0.02
-        self.somme_err_courbe = 0          # integrale du suivi de mur (etat)
-        self.last_err_courbe = 0           # derniere erreur du suivi de mur (etat)
-
         #enregistrement
         self.angle = 0
 
@@ -147,24 +137,16 @@ class CCerveau:
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
-                                    self.somme_err_courbe = 0
-                                    self.last_err_courbe = 0
                             else:  # LIGNE_DROITE : on entre en virage des qu'il est detecte
                                 if nouvel_etat != "LIGNE_DROITE":
                                     self.etat_voie = nouvel_etat
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
-                                    self.somme_err_courbe = 0
-                                    self.last_err_courbe = 0
 
-                            # 3. Calcul de la cible
-                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
-                                # Suivi du mur interieur par PID
-                                target = self.calc_angle_courbe(gauche, droit, dt)
-                            else: # LIGNE_DROITE
-                                # PID de centrage
-                                target = self.calc_angle_centre(gauche, droit, dt)
+                            # 3. Calcul de la cible : on reste TOUJOURS centre dans le couloir
+                            #    (l'etat COURBE/LIGNE ne sert plus qu'a regler la vitesse)
+                            target = self.calc_angle_centre(gauche, droit, dt)
 
                             # 4. Lissage passe-bas (70% ancienne valeur, 30% nouvelle)
                             angle_destination = (angle_destination * 0.7) + (target * 0.3)
@@ -270,44 +252,6 @@ class CCerveau:
         commande = (erreur * self.Kp_centre) + (self.somme_erreur_centre * self.Ki_centre) + (derivee * self.Kd_centre)
         return -commande
 
-    def calc_angle_courbe(self, gauche, droit, dt):
-        """ Suivi du mur INTERIEUR en virage par regulateur PID sur la distance.
-            But : rouler precisement a DISTANCE_CIBLE_VIRAGE du mur interieur, de
-            facon stable.
-            - BASE_COURBE : braquage de fond (anticipation du virage)
-            - P : reaction immediate a l'ecart de distance
-            - I : annule l'erreur statique (precision)
-            - D : amortit (stabilite) """
-        if self.etat_voie == "COURBE_DROITE":
-            inner = droit      # mur interieur a droite
-            sens = -1          # angle negatif = on tourne a droite
-        elif self.etat_voie == "COURBE_GAUCHE":
-            inner = gauche     # mur interieur a gauche
-            sens = 1
-        else:
-            return 0
-
-        if not inner or len(inner) == 0:
-            return sens * self.BASE_COURBE   # mur int non vu : braquage de fond
-
-        moy_inner = sum(inner) / len(inner)
-        erreur = moy_inner - self.DISTANCE_CIBLE_VIRAGE   # >0 : trop loin du mur int -> resserrer
-
-        # I : annule l'erreur statique (precision), avec anti-windup
-        self.somme_err_courbe += erreur * dt
-        self.somme_err_courbe = max(-600, min(600, self.somme_err_courbe))
-
-        # D : amortit l'oscillation (stabilite)
-        derivee = (erreur - self.last_err_courbe) / dt if dt > 0 else 0.0
-        self.last_err_courbe = erreur
-
-        intensite = (self.BASE_COURBE
-                     + self.Kp_mur * erreur
-                     + self.Ki_mur * self.somme_err_courbe
-                     + self.Kd_mur * derivee)
-        intensite = max(0, min(30, intensite))            # jamais negatif -> pas de contre-braquage
-        return sens * intensite
-
     def calc_virage(self, gauche, droit):
         # Si un cote manque (mur exterieur hors de portee en virage serre),
         # on NE repart PAS en ligne droite : on garde l'etat courant.
@@ -342,32 +286,6 @@ class CCerveau:
             return "COURBE_GAUCHE"
 
         return "LIGNE_DROITE"
-
-    def calc_angle_suivi_mur(self, distances, cote="GAUCHE"):
-        """
-        Calcule un ajustement d'angle pour maintenir une distance cible
-        avec le mur interieur du virage.
-        """
-        if not distances or len(distances) == 0:
-            return 0
-
-        moyenne_distances = sum(distances) / len(distances)
-
-        # L'erreur est la difference entre ou on est et ou on veut etre
-        # Si erreur > 0 : on est trop pres. Si erreur < 0 : on est trop loin.
-        erreur = self.DISTANCE_CIBLE_VIRAGE - moyenne_distances
-
-        # PID simplifie pour le virage
-        commande = erreur * self.Kp_mur
-
-        if cote == "GAUCHE":
-            # En virage a GAUCHE, le mur interieur est a GAUCHE.
-            # Si commande > 0 (trop pres), on soustrait a l'angle (on redresse vers la droite).
-            return -commande
-        else:
-            # En virage a DROITE, le mur interieur est a DROITE.
-            # Si commande > 0 (trop pres), on ajoute a l'angle (on redresse vers la gauche).
-            return commande
 
     def stop_detection(self):
         self.lidar.stop_lidar()
