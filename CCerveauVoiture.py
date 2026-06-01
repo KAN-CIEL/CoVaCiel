@@ -42,8 +42,12 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        self.DISTANCE_CIBLE_VIRAGE = 320   # 32 cm du mur interieur (au lieu de 20)
+        self.DISTANCE_CIBLE_VIRAGE = 320   # (utilise par l'ancien suivi de mur, desormais inactif)
         self.Kp_mur = 0.05
+
+        # Braquage proportionnel en virage : angle = -Kp_courbe * (asymetrie des murs).
+        # 0.025 -> ~15deg a l'entree (diff=600), sature a 30deg vers diff=1200.
+        self.Kp_courbe = 0.025
 
         #enregistrement
         self.angle = 0
@@ -103,7 +107,7 @@ class CCerveau:
 
                                 print(f"!!! STOP : {d_proche_val}mm !!!")
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
-                                com.send_command(0x05, b'\xe8\x00\x00\x00\x00\x00') #recul
+                                com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
                                 self.temps_fin_recul = t_now + 2.5
                                 continue
@@ -147,15 +151,10 @@ class CCerveau:
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
 
-                            # 3. Calcul de la cible (PID)
-                            if self.etat_voie == "COURBE_DROITE":
-                                # Braquage de base (-25) + PID d'evitement du mur droit
-                                target = -25 + self.calc_angle_suivi_mur(droit, cote="DROIT")
-
-                            elif self.etat_voie == "COURBE_GAUCHE":
-                                # Braquage de base (+25) + PID d'evitement du mur gauche
-                                target = 25 + self.calc_angle_suivi_mur(gauche, cote="GAUCHE")
-
+                            # 3. Calcul de la cible
+                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                                # Braquage PROPORTIONNEL a la severite du virage
+                                target = self.calc_angle_courbe(gauche, droit)
                             else: # LIGNE_DROITE
                                 # PID de centrage
                                 target = self.calc_angle_centre(gauche, droit, dt)
@@ -175,10 +174,10 @@ class CCerveau:
                             com.send_command(0x07, trame_servo)
 
                             if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x1E\x00\x1e\x00\x00\x00') # Vitesse stable
+                                com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
+                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage
 
                             self.last_cmd_t = t_now
 
@@ -263,6 +262,17 @@ class CCerveau:
 
         commande = (erreur * self.Kp_centre) + (self.somme_erreur_centre * self.Ki_centre) + (derivee * self.Kd_centre)
         return -commande
+
+    def calc_angle_courbe(self, gauche, droit):
+        """ Braquage PROPORTIONNEL a la severite du virage (asymetrie des murs).
+            Courbe douce -> petit angle ; virage serre -> grand angle. """
+        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
+            return 0
+        moy_g = sum(gauche) / len(gauche)
+        moy_d = sum(droit) / len(droit)
+        diff = moy_g - moy_d   # > 0 : plus d'espace a gauche -> virage a DROITE (angle negatif)
+        target = -self.Kp_courbe * diff
+        return max(-30, min(30, target))
 
     def calc_virage(self, gauche, droit):
         # Si un cote manque (mur exterieur hors de portee en virage serre),
