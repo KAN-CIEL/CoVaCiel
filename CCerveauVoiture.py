@@ -44,10 +44,15 @@ class CCerveau:
 
         # Braquage de virage : biais SOUTENU (prendre le virage avec l'elan) +
         # coup de volant supplementaire a l'entree qui decroit ; le PID centre par-dessus.
-        self.BIAIS_COURBE = 18     # braquage soutenu maintenu pendant TOUT le virage (deg)
+        self.BIAIS_COURBE = 18     # braquage soutenu maintenu pendant le virage (deg)
         self.BOOST_ENTREE = 15     # coup de volant supplementaire a l'entree (deg)
         self.DUREE_BOOST = 0.5     # duree de decroissance du coup de volant d'entree (s)
         self.t_entree_virage = 0   # instant d'entree dans le virage courant
+        # Securite anti-mur interieur : le biais de virage est progressivement
+        # annule quand la distance au mur interieur descend de TAPER_MAX vers TAPER_MIN.
+        # -> braquage plein quand il y a de la place, coupe en fin/apex de virage.
+        self.TAPER_MIN = 300       # <= cette distance (mm) : biais totalement coupe
+        self.TAPER_MAX = 600       # >= cette distance (mm) : biais plein
 
         #enregistrement
         self.angle = 0
@@ -161,11 +166,20 @@ class CCerveau:
                             # l'entree qui decroit. Le PID de centrage module par-dessus.
                             if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
                                 sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
+                                inner = droit if self.etat_voie == "COURBE_DROITE" else gauche
                                 biais = self.BIAIS_COURBE
                                 age = t_now - self.t_entree_virage
                                 if age < self.DUREE_BOOST:
                                     biais += self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
-                                target += sens * biais
+                                # Securite : on reduit le biais quand on approche du mur
+                                # interieur (fin/apex de virage) pour ne pas le percuter.
+                                if inner and len(inner) > 0:
+                                    moy_inner = sum(inner) / len(inner)
+                                    taper = (moy_inner - self.TAPER_MIN) / (self.TAPER_MAX - self.TAPER_MIN)
+                                    taper = max(0.0, min(1.0, taper))
+                                else:
+                                    taper = 1.0
+                                target += sens * biais * taper
 
                             target = max(-30, min(30, target))
 
