@@ -54,6 +54,19 @@ class CCerveau:
         self.TAPER_MIN = 300       # <= cette distance (mm) : biais totalement coupe
         self.TAPER_MAX = 600       # >= cette distance (mm) : biais plein
 
+        # Gestion de vitesse (octet 0 de la commande 0x05 ; plus haut = plus rapide)
+        self.V_MAX = 0x3c          # pointe en ligne droite degagee (60)
+        self.V_VIRAGE = 0x1e       # vitesse en virage (30)
+        self.V_FREIN = 0x1e        # vitesse visee a l'approche d'un virage (freinage avant)
+        self.SEUIL_FREINAGE = 1500 # mm : sous cette distance frontale en ligne droite -> on freine
+        self.ACCEL_RAMPE = 60.0    # unites/s de montee en vitesse (douceur d'acceleration)
+        self.FREIN_RAMPE = 150.0   # unites/s de descente (freinage plus vif)
+        self.vitesse_cmd = float(self.V_VIRAGE)  # vitesse commandee courante (lissee)
+
+        # Donnees IMU (trame 0x06 : cap sur octets 0-1, acceleration sur octets 2-3)
+        self.cap = 0.0
+        self.acceleration = 0.0
+
         #enregistrement
         self.angle = 0
 
@@ -63,14 +76,16 @@ class CCerveau:
         """ Cree le fichier de log avec l'en-tete """
         with open(self.log_file, mode='w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["Timestamp", "Etat", "Angle_Dest", "Servo", "Obs_Proche", "Obs_Loin"])
+            writer.writerow(["Timestamp", "Etat", "Angle_Dest", "Servo", "Obs_Proche", "Obs_Loin",
+                             "Cap", "Accel", "Vitesse_Cmd"])
 
     def log_data(self, etat, angle_dest, servo_val, obs_proche_dist, obs_loin_dist):
         """ Enregistre les donnees dans le CSV """
         timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
         with open(self.log_file, mode='a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([timestamp, etat, f"{angle_dest:.1f}", servo_val, obs_proche_dist, obs_loin_dist])
+            writer.writerow([timestamp, etat, f"{angle_dest:.1f}", servo_val, obs_proche_dist, obs_loin_dist,
+                             f"{self.cap:.1f}", f"{self.acceleration:.2f}", int(round(self.vitesse_cmd))])
 
     def start_detection(self, signal, com):
         if self.lidar.start_lidar():
@@ -197,11 +212,27 @@ class CCerveau:
                             trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
                             com.send_command(0x07, trame_servo)
 
+                            # --- GESTION DE VITESSE ---
+                            # Cible selon la situation : accelere en ligne droite degagee,
+                            # freine AVANT le virage (anticipation via la distance frontale),
+                            # vitesse reduite en virage, re-accelere en sortie.
+                            dist_devant = self.gestion_lidar.get_distance_frontale()
                             if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable
+                                if dist_devant > self.SEUIL_FREINAGE:
+                                    v_cible = self.V_MAX     # voie degagee -> on accelere
+                                else:
+                                    v_cible = self.V_FREIN   # virage proche devant -> on freine avant
                             else:
-                                #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage
+                                v_cible = self.V_VIRAGE      # en virage -> vitesse reduite
+
+                            # Rampe : montee/descente progressive (pas d'a-coup moteur)
+                            if v_cible > self.vitesse_cmd:
+                                self.vitesse_cmd = min(v_cible, self.vitesse_cmd + self.ACCEL_RAMPE * dt)
+                            else:
+                                self.vitesse_cmd = max(v_cible, self.vitesse_cmd - self.FREIN_RAMPE * dt)
+
+                            trame_vitesse = bytes([int(round(self.vitesse_cmd)), 0x00, 0x1e, 0x00, 0x00, 0x00])
+                            com.send_command(0x05, trame_vitesse)
 
                             self.last_cmd_t = t_now
 
@@ -222,16 +253,19 @@ class CCerveau:
                                 # On divise par 100 comme demande
                                 batterie_val = batterie_brute / 100.0
 
-                            # 3. Lecture de la vitesse IMU (Commande 0x06)
-                            trame_vitesse_imu = com.send_command(0x06, b'\x00\x00\x00\x00\x00\x00') #nico
-
-                            if trame_vitesse_imu and len(trame_vitesse_imu) >= 2: #nico
-                                vitesse_imu = (trame_vitesse_imu[0] << 8) | trame_vitesse_imu[1] #nico
-                                vitesse_imu = vitesse_imu / 100.0 #nico
+                            # 3. Lecture IMU (Commande 0x06) : cap sur octets 0-1, acceleration sur octets 2-3
+                            trame_imu = com.send_command(0x06, b'\x00\x00\x00\x00\x00\x00') #nico
+                            if trame_imu and len(trame_imu) >= 4:
+                                self.cap = ((trame_imu[0] << 8) | trame_imu[1]) / 100.0
+                                acc = (trame_imu[2] << 8) | trame_imu[3]
+                                if acc >= 32768:          # acceleration signee (+/-)
+                                    acc -= 65536
+                                self.acceleration = acc / 100.0
 
                             # On appelle la fonction avec les variables de CCerveau
+                            # (vitesse = vitesse commandee lissee, telemetrie utile)
                             self.enregistreur.sauvegarder_donnees(
-                                vitesse=vitesse_imu,
+                                vitesse=self.vitesse_cmd,
                                 angle=servo_val,
                                 lidar_val=dist_lidar,
                                 batterie_val=batterie_val
