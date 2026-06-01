@@ -35,6 +35,13 @@ class CGestion:
         droit = [p[2] for p in self.scan if 31 <= p[1] <= 130]
         return gauche, droit
 
+    def get_distance_frontale(self, demi_angle=15):
+        """ Distance moyenne dans un cone etroit droit devant (0 +/- demi_angle) """
+        pts = [p[2] for p in self.scan if p[1] <= demi_angle or p[1] >= 360 - demi_angle]
+        if not pts:
+            return 4000
+        return sum(pts) / len(pts)
+
     def pente_moyenne(self, distances):
         if len(distances) < 2:
             return 0
