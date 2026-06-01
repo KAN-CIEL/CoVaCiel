@@ -33,14 +33,19 @@ class CCerveau:
         # Gains PID pour le centrage (Ligne Droite)
         # I et D sont normalises par dt : valeurs rescalees pour rester
         # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
-        self.Kp_centre = 0.028    # moins de gain proportionnel (anti-oscillation a haute vitesse)
+        self.Kp_centre = 0.035    # gain proportionnel du centrage
         self.Ki_centre = 0.02
-        self.Kd_centre = 0.0012   # plus d'amortissement (freine les ondulations)
+        self.Kd_centre = 0.0025   # amortissement (freine les ondulations)
 
         # Memoires separees pour eviter les coups de raquette
         self.last_erreur_centre = 0
         self.somme_erreur_centre = 0
         self.recul_val = 0
+
+        # Boost d'entree de virage : coup de volant fort qui decroit, puis le PID reprend
+        self.BOOST_ENTREE = 25     # braquage ajoute a l'entree du virage (deg)
+        self.DUREE_BOOST = 0.5     # duree de decroissance du boost (s)
+        self.t_entree_virage = 0   # instant d'entree dans le virage courant
 
         #enregistrement
         self.angle = 0
@@ -137,19 +142,31 @@ class CCerveau:
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
+                                    self.t_entree_virage = t_now   # relance le boost d'entree
                             else:  # LIGNE_DROITE : on entre en virage des qu'il est detecte
                                 if nouvel_etat != "LIGNE_DROITE":
                                     self.etat_voie = nouvel_etat
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
+                                    self.t_entree_virage = t_now   # lance le boost d'entree
 
-                            # 3. Calcul de la cible : on reste TOUJOURS centre dans le couloir
-                            #    (l'etat COURBE/LIGNE ne sert plus qu'a regler la vitesse)
+                            # 3. Calcul de la cible : centrage PID dans le couloir
                             target = self.calc_angle_centre(gauche, droit, dt)
 
-                            # 4. Lissage passe-bas (70% ancienne valeur, 30% nouvelle)
-                            angle_destination = (angle_destination * 0.7) + (target * 0.3)
+                            # Boost d'entree : coup de volant fort qui decroit sur DUREE_BOOST,
+                            # puis le PID de centrage reprend seul la main pour recentrer.
+                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                                age = t_now - self.t_entree_virage
+                                if age < self.DUREE_BOOST:
+                                    sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
+                                    boost = self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
+                                    target += sens * boost
+
+                            target = max(-30, min(30, target))
+
+                            # 4. Lissage passe-bas (40% ancienne valeur, 60% nouvelle = reactif)
+                            angle_destination = (angle_destination * 0.4) + (target * 0.6)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))

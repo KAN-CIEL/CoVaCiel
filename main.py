@@ -19,6 +19,8 @@ if __name__ == "__main__":
     print("Systeme de Telemetrie Connect et Automatique.")
     com.start()
     #enregistrement.init(com, Brain) #saiba
+
+    
     
 
     #etat_signal = False
@@ -29,6 +31,7 @@ if __name__ == "__main__":
     while True:
 
         msg = signal.read_signal()
+        #msg = "GO"
 
         #com.gestion_start_and_stop(etat_signal, Brain, signal, com)
         
