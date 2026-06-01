@@ -173,7 +173,7 @@ class CCerveau:
                             if self.etat_voie == "LIGNE_DROITE":
                                 com.send_command(0x05, b'\x1E\x00\x1e\x00\x00\x00') # Vitesse stable
                             else:
-                                com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
+                                #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                                 com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
 
                             self.last_cmd_t = t_now
