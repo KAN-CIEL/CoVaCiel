@@ -42,12 +42,9 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        self.DISTANCE_CIBLE_VIRAGE = 320   # (utilise par l'ancien suivi de mur, desormais inactif)
-        self.Kp_mur = 0.05
-
-        # Braquage proportionnel en virage : angle = -Kp_courbe * (asymetrie des murs).
-        # 0.025 -> ~15deg a l'entree (diff=600), sature a 30deg vers diff=1200.
-        self.Kp_courbe = 0.025
+        self.DISTANCE_CIBLE_VIRAGE = 400   # distance cible au mur INTERIEUR en virage (mm)
+        self.Kp_mur = 0.05                 # gain de regulation de la distance au mur interieur
+        self.BASE_COURBE = 18              # braquage minimum garanti pour tenir la courbe (deg)
 
         #enregistrement
         self.angle = 0
@@ -264,15 +261,27 @@ class CCerveau:
         return -commande
 
     def calc_angle_courbe(self, gauche, droit):
-        """ Braquage PROPORTIONNEL a la severite du virage (asymetrie des murs).
-            Courbe douce -> petit angle ; virage serre -> grand angle. """
-        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
+        """ Braquage en virage : base soutenue + suivi du mur INTERIEUR.
+            - BASE_COURBE garantit un braquage minimum pour tenir la courbe
+            - on regule la distance au mur interieur (DISTANCE_CIBLE_VIRAGE) :
+              trop loin du mur int -> on resserre ; trop pres -> on elargit. """
+        if self.etat_voie == "COURBE_DROITE":
+            inner = droit      # mur interieur a droite
+            sens = -1          # angle negatif = on tourne a droite
+        elif self.etat_voie == "COURBE_GAUCHE":
+            inner = gauche     # mur interieur a gauche
+            sens = 1
+        else:
             return 0
-        moy_g = sum(gauche) / len(gauche)
-        moy_d = sum(droit) / len(droit)
-        diff = moy_g - moy_d   # > 0 : plus d'espace a gauche -> virage a DROITE (angle negatif)
-        target = -self.Kp_courbe * diff
-        return max(-30, min(30, target))
+
+        if not inner or len(inner) == 0:
+            return sens * self.BASE_COURBE   # mur int non vu : on tient le braquage de base
+
+        moy_inner = sum(inner) / len(inner)
+        erreur = moy_inner - self.DISTANCE_CIBLE_VIRAGE   # >0 : trop loin du mur int -> resserrer
+        intensite = self.BASE_COURBE + self.Kp_mur * erreur
+        intensite = max(0, min(30, intensite))            # jamais negatif -> pas de contre-braquage
+        return sens * intensite
 
     def calc_virage(self, gauche, droit):
         # Si un cote manque (mur exterieur hors de portee en virage serre),
