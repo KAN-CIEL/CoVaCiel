@@ -1,7 +1,7 @@
 from CCerveauVoiture import CCerveau
 from CCommunication_UART import CCommunication
 from CSignal_XBEE import CSignal
-from CEnregistrement import EnregistreurCovaciel 
+from CEnregistrement import CEnregistreurCovaciel 
 
 import time
 import logging
@@ -10,22 +10,15 @@ logging.getLogger('rplidar').setLevel(logging.ERROR)
 
 if __name__ == "__main__":
     Brain = CCerveau()
-    com = CCommunication(port="/dev/ttyACM0", baud=9600)
+    com = CCommunication()
     signal = CSignal()
-    recorder = EnregistreurCovaciel()
-
-    original_listen = com._listen
-    def listen_and_record():
-        # Cette fonction s'execute dans le thread de lecture de tes camarades
-        # Elle est appelee automatiquement d�s que l'UART re�oit un message
-        original_listen() 
-        if hasattr(com, 'derniere_commande'):
-            recorder.sauvegarder_trame(com.derniere_commande, com.derniers_datas)
+    enregistrement = CEnregistreurCovaciel()
             
 
 
     print("Systeme de Telemetrie Connect et Automatique.")
     com.start()
+    #enregistrement.init(com, Brain) #saiba
     
 
     #etat_signal = False
@@ -54,7 +47,7 @@ if __name__ == "__main__":
             print("Signal reçu : DÉPART")
             etat_signal = True
             Brain.start_detection()
-        elif msg == "STOP":
+        elif msg == "STOP": 
             print("Signal reçu : ARRÊT")
             etat_signal = False
             Brain.stop_detection()

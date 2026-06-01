@@ -2,6 +2,7 @@ import serial
 import threading
 import time
 import serial.tools.list_ports
+from CEnregistrement import CEnregistreurCovaciel  #nico
 
 from CSignal_XBEE import CSignal
 from CCerveauVoiture import CCerveau
@@ -14,6 +15,7 @@ class CCommunication:
         self.ser = serial.Serial(self.PORT, self.BAUD, timeout=self.timeout)
         self.rx_thread = None
         self.running = False
+        self.recorder = CEnregistreurCovaciel() #nico
 
         self.CMD_EMISSION = {
             0x01: "PING", 0x02: "GET_DEBUG", 0x03: "GET_STATUS",
@@ -66,6 +68,7 @@ class CCommunication:
         elif cmd in self.CMD_RECEPTION:
             name = self.CMD_RECEPTION[cmd]
             print(f"RX: {name} | {payload.hex()}")
+        #self.recorder.sauvegarder_trame(cmd, payload) #nico
 
     def start(self):
         if not self.running:
@@ -86,6 +89,10 @@ class CCommunication:
         chk_tx = (cmd + sum(data)) % 256
         frame = bytes([cmd]) + data + bytes([chk_tx])
         try:
+            # On enregistre l'ordre exact que le Pi envoie � la voiture ! nico
+            #if hasattr(self, 'recorder'): #nico
+                #self.recorder.sauvegarder_trame(cmd, data) #nico
+
             self.ser.write(frame)
         except:
             pass
