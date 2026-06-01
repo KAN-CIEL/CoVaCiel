@@ -42,9 +42,11 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        # Boost d'entree de virage : coup de volant fort qui decroit, puis le PID reprend
-        self.BOOST_ENTREE = 25     # braquage ajoute a l'entree du virage (deg)
-        self.DUREE_BOOST = 0.5     # duree de decroissance du boost (s)
+        # Braquage de virage : biais SOUTENU (prendre le virage avec l'elan) +
+        # coup de volant supplementaire a l'entree qui decroit ; le PID centre par-dessus.
+        self.BIAIS_COURBE = 18     # braquage soutenu maintenu pendant TOUT le virage (deg)
+        self.BOOST_ENTREE = 15     # coup de volant supplementaire a l'entree (deg)
+        self.DUREE_BOOST = 0.5     # duree de decroissance du coup de volant d'entree (s)
         self.t_entree_virage = 0   # instant d'entree dans le virage courant
 
         #enregistrement
@@ -154,14 +156,16 @@ class CCerveau:
                             # 3. Calcul de la cible : centrage PID dans le couloir
                             target = self.calc_angle_centre(gauche, droit, dt)
 
-                            # Boost d'entree : coup de volant fort qui decroit sur DUREE_BOOST,
-                            # puis le PID de centrage reprend seul la main pour recentrer.
+                            # Braquage de virage = biais SOUTENU (engage et tient le virage,
+                            # pour le prendre avec l'elan) + coup de volant supplementaire a
+                            # l'entree qui decroit. Le PID de centrage module par-dessus.
                             if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                                sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
+                                biais = self.BIAIS_COURBE
                                 age = t_now - self.t_entree_virage
                                 if age < self.DUREE_BOOST:
-                                    sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
-                                    boost = self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
-                                    target += sens * boost
+                                    biais += self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
+                                target += sens * biais
 
                             target = max(-30, min(30, target))
 
