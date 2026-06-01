@@ -31,7 +31,7 @@ if __name__ == "__main__":
     while True:
 
         msg = signal.read_signal()
-        msg = "GO"
+        #msg = "GO"
 
         #com.gestion_start_and_stop(etat_signal, Brain, signal, com)
         

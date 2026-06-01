@@ -25,20 +25,22 @@ class CCerveau:
         self.etat_voie = "LIGNE_DROITE"
         self.log_file = "lidar_logs.csv"
 
+        # Debounce de SORTIE de virage : il faut voir "LIGNE_DROITE" en continu
+        # pendant DUREE_CONFIRM_SORTIE avant de quitter un virage (anti-clignotement).
+        self.t_ligne_candidate = 0
+        self.DUREE_CONFIRM_SORTIE = 0.4
+
         # Gains PID pour le centrage (Ligne Droite)
         # I et D sont normalises par dt : valeurs rescalees pour rester
         # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
-        self.Kp_centre = 0.036
+        self.Kp_centre = 0.035    # moins de gain proportionnel (anti-oscillation a haute vitesse)
         self.Ki_centre = 0.02
-        self.Kd_centre = 0.0004
+        self.Kd_centre = 0.0025   # plus d'amortissement (freine les ondulations)
 
         # Memoires separees pour eviter les coups de raquette
         self.last_erreur_centre = 0
         self.somme_erreur_centre = 0
         self.recul_val = 0
-
-        self.DISTANCE_CIBLE_VIRAGE = 200
-        self.Kp_mur = 0.05
 
         #enregistrement
         self.angle = 0
@@ -68,7 +70,6 @@ class CCerveau:
                 angle_destination = 0.0
                 servo_val = 86
                 vitesse_imu = 0 #nico
-                t_debut_virage = 0 # Memoire pour le verrouillage du virage
 
                 for scan in scans:
                     try:
@@ -84,17 +85,6 @@ class CCerveau:
                         # --- LOGIQUE DE SECURITE / MARCHE ARRIERE ---
                         # On ne traite la marche arriere que s'il existe un obstacle proche.
                         if plus_proche:
-
-                            moyenne_d = 1000
-
-                            champ_libre = com.send_command(0x08, b'\x00\x00\x00\x00\x00\x00') # Lecture capteur de champ libre a l'avant
-                            if champ_libre and len(champ_libre) >= 6:
-                                val1 = champ_libre[0] << 8 | champ_libre[1]
-                                val2 = champ_libre[2] << 8 | champ_libre[3]
-                                val3 = champ_libre[4] << 8 | champ_libre[5]
-
-                                moyenne_d = (val1 + val2 + val3) / 3
-
                             _, _, d_proche_val = plus_proche
 
                             if d_proche_val < self.distance_arret :
@@ -124,40 +114,42 @@ class CCerveau:
                             if dt <= 0 or dt > 0.5:
                                 dt = self.cmd_interval
 
-                            # 1. Quel est l'etat theorique de la route devant nous ?
+                            # 1. Etat theorique de la route devant nous
                             nouvel_etat = self.calc_virage(gauche, droit)
 
-                            # 2. ANTI-ZIGZAG : On verrouille la SORTIE de virage pendant 0.4s,
-                            # mais on n'empeche jamais d'ENTRER dans un virage.
-                            en_virage_verrouille = (self.etat_voie in ["COURBE_DROITE", "COURBE_GAUCHE"]) and (t_now - t_debut_virage < 0.4)
+                            # 2. Machine a etats avec debounce :
+                            #    - ENTREE en virage : immediate (on doit reagir vite)
+                            #    - SORTIE de virage : seulement si "LIGNE_DROITE" tient DUREE_CONFIRM_SORTIE
+                            #    - virage oppose : bascule immediate (rare, demande une forte asymetrie)
+                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                                if nouvel_etat == self.etat_voie:
+                                    self.t_ligne_candidate = 0  # virage confirme, on annule la sortie
+                                elif nouvel_etat == "LIGNE_DROITE":
+                                    if self.t_ligne_candidate == 0:
+                                        self.t_ligne_candidate = t_now
+                                    elif t_now - self.t_ligne_candidate >= self.DUREE_CONFIRM_SORTIE:
+                                        self.etat_voie = "LIGNE_DROITE"
+                                        self.t_ligne_candidate = 0
+                                        self.somme_erreur_centre = 0
+                                        self.last_erreur_centre = 0
+                                else:  # virage oppose
+                                    self.etat_voie = nouvel_etat
+                                    self.t_ligne_candidate = 0
+                                    self.somme_erreur_centre = 0
+                                    self.last_erreur_centre = 0
+                            else:  # LIGNE_DROITE : on entre en virage des qu'il est detecte
+                                if nouvel_etat != "LIGNE_DROITE":
+                                    self.etat_voie = nouvel_etat
+                                    self.t_ligne_candidate = 0
+                                    self.somme_erreur_centre = 0
+                                    self.last_erreur_centre = 0
 
-                            danger_mur = (plus_proche and plus_proche[2] < 250)
-
-                            if en_virage_verrouille and not danger_mur:
-                                pass # On maintient l'etat de courbe actuel
-                            elif nouvel_etat != self.etat_voie:
-                                self.etat_voie = nouvel_etat
-                                # Anti-windup : on repart d'une integrale propre a chaque changement d'etat
-                                self.somme_erreur_centre = 0
-                                self.last_erreur_centre = 0
-                                if self.etat_voie != "LIGNE_DROITE":
-                                    t_debut_virage = t_now # Lance le chrono du virage
-
-                            # 3. Calcul de la cible (PID)
-                            if self.etat_voie == "COURBE_DROITE":
-                                # Braquage de base (-25) + PID d'evitement du mur droit
-                                target = -25 + self.calc_angle_suivi_mur(droit, cote="DROIT")
-
-                            elif self.etat_voie == "COURBE_GAUCHE":
-                                # Braquage de base (+25) + PID d'evitement du mur gauche
-                                target = 25 + self.calc_angle_suivi_mur(gauche, cote="GAUCHE")
-
-                            else: # LIGNE_DROITE
-                                # PID de centrage
-                                target = self.calc_angle_centre(gauche, droit, dt)
+                            # 3. Calcul de la cible : on reste TOUJOURS centre dans le couloir
+                            #    (l'etat COURBE/LIGNE ne sert plus qu'a regler la vitesse)
+                            target = self.calc_angle_centre(gauche, droit, dt)
 
                             # 4. Lissage passe-bas (70% ancienne valeur, 30% nouvelle)
-                            angle_destination = (angle_destination * 0.7) + (target * 0.3)
+                            angle_destination = (angle_destination * 0.4) + (target * 0.6)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))
@@ -171,10 +163,10 @@ class CCerveau:
                             com.send_command(0x07, trame_servo)
 
                             if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x1e\x00\x1e\x00\x00\x00') # Vitesse stable
+                                com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x05, b'\x19\x00\x00\x00\x00\x00') # Vitesse virage
+                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage
 
                             self.last_cmd_t = t_now
 
@@ -261,49 +253,39 @@ class CCerveau:
         return -commande
 
     def calc_virage(self, gauche, droit):
+        # Si un cote manque (mur exterieur hors de portee en virage serre),
+        # on NE repart PAS en ligne droite : on garde l'etat courant.
         if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
+            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                return self.etat_voie
             return "LIGNE_DROITE"
 
         moy_g = sum(gauche) / len(gauche)
         moy_d = sum(droit) / len(droit)
+        diff = moy_g - moy_d   # > 0 : mur gauche plus loin -> virage a DROITE
 
         dist_devant = self.gestion_lidar.get_distance_frontale()
 
-        DIFF_VIRAGE = 600
-        SEUIL_DECLENCHEMENT_FRONTAL = 2500
+        SEUIL_ENTREE = 600     # asymetrie pour ENTRER en virage
+        SEUIL_SORTIE = 250     # asymetrie pour SORTIR (hysteresis : plus bas)
+        SEUIL_FRONTAL = 2500
 
-        if moy_g - moy_d > DIFF_VIRAGE and (dist_devant < SEUIL_DECLENCHEMENT_FRONTAL):
+        # Hysteresis : une fois en virage, on y RESTE tant que l'asymetrie reste
+        # marquee. Empeche le clignotement COURBE/LIGNE au milieu d'un virage.
+        if self.etat_voie == "COURBE_DROITE":
+            if diff > SEUIL_SORTIE:
+                return "COURBE_DROITE"
+        elif self.etat_voie == "COURBE_GAUCHE":
+            if -diff > SEUIL_SORTIE:
+                return "COURBE_GAUCHE"
+
+        # Conditions d'ENTREE (la distance frontale ne sert qu'a anticiper l'entree)
+        if diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
             return "COURBE_DROITE"
-        elif moy_d - moy_g > DIFF_VIRAGE and (dist_devant < SEUIL_DECLENCHEMENT_FRONTAL):
+        elif -diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
             return "COURBE_GAUCHE"
 
         return "LIGNE_DROITE"
-
-    def calc_angle_suivi_mur(self, distances, cote="GAUCHE"):
-        """
-        Calcule un ajustement d'angle pour maintenir une distance cible
-        avec le mur interieur du virage.
-        """
-        if not distances or len(distances) == 0:
-            return 0
-
-        moyenne_distances = sum(distances) / len(distances)
-
-        # L'erreur est la difference entre ou on est et ou on veut etre
-        # Si erreur > 0 : on est trop pres. Si erreur < 0 : on est trop loin.
-        erreur = self.DISTANCE_CIBLE_VIRAGE - moyenne_distances
-
-        # PID simplifie pour le virage
-        commande = erreur * self.Kp_mur
-
-        if cote == "GAUCHE":
-            # En virage a GAUCHE, le mur interieur est a GAUCHE.
-            # Si commande > 0 (trop pres), on soustrait a l'angle (on redresse vers la droite).
-            return -commande
-        else:
-            # En virage a DROITE, le mur interieur est a DROITE.
-            # Si commande > 0 (trop pres), on ajoute a l'angle (on redresse vers la gauche).
-            return commande
 
     def stop_detection(self):
         self.lidar.stop_lidar()

@@ -1,5 +1,6 @@
 from rplidar import RPLidar
 from CGestion_Lidar import CGestion
+import time
 
 class CDetection:
     def __init__(self):
@@ -12,6 +13,13 @@ class CDetection:
     def start_lidar(self):
         try:
             self.lidar = RPLidar(self.PORT, self.BAUDERATE, self.timeout)
+            # Remise a l'etat repos pour eviter "Descriptor length mismatch" :
+            # un run precedent a pu laisser le LIDAR en mode scan -> on arrete le
+            # scan, le moteur, et on vide le buffer serie residuel avant de relancer.
+            self.lidar.stop()
+            self.lidar.stop_motor()
+            self.lidar.clear_input()
+            time.sleep(0.5)
             print("LIDAR demarre")
             return True
         except Exception as e:
