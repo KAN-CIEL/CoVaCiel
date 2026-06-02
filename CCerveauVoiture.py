@@ -306,7 +306,7 @@ class CCerveau:
         dist_devant = self.gestion_lidar.get_distance_frontale()
 
         SEUIL_ENTREE = 600     # asymetrie pour ENTRER en virage
-        SEUIL_SORTIE = 250     # asymetrie pour SORTIR (hysteresis : plus bas)
+        SEUIL_SORTIE = 350     # asymetrie pour SORTIR (hysteresis) : monte -> sort du virage plus tot
         SEUIL_FRONTAL = 2500
 
         # Hysteresis : une fois en virage, on y RESTE tant que l'asymetrie reste
