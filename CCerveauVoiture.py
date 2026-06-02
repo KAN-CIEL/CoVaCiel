@@ -34,9 +34,9 @@ class CCerveau:
         # Gains PID pour le centrage (Ligne Droite)
         # I et D sont normalises par dt : valeurs rescalees pour rester
         # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
-        self.Kp_centre = 0.035    # gain proportionnel du centrage
+        self.Kp_centre = 0.025    # gain proportionnel du centrage (reduit -> moins d'oscillation)
         self.Ki_centre = 0.02
-        self.Kd_centre = 0.0025   # amortissement (freine les ondulations)
+        self.Kd_centre = 0.001    # derivee reduite -> n'amplifie plus le bruit des secteurs
 
         # Memoires separees pour eviter les coups de raquette
         self.last_erreur_centre = 0
@@ -224,8 +224,8 @@ class CCerveau:
 
                             target = max(-30, min(30, target))
 
-                            # 4. Lissage passe-bas (40% ancienne valeur, 60% nouvelle = reactif)
-                            angle_destination = (angle_destination * 0.4) + (target * 0.6)
+                            # 4. Lissage passe-bas (60% ancienne, 40% nouvelle = plus lisse, moins d'oscillation)
+                            angle_destination = (angle_destination * 0.6) + (target * 0.4)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))
