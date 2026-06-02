@@ -42,6 +42,25 @@ class CGestion:
             return 4000
         return sum(pts) / len(pts)
 
+    def direction_degagee(self, demi_champ=80, taille_bin=10):
+        """ Angle relatif (deg ; + = droite, - = gauche) de la direction la PLUS
+            DEGAGEE devant la voiture : on decoupe le champ avant en secteurs et on
+            renvoie le centre du secteur dont la distance moyenne est la plus grande. """
+        if not self.scan:
+            return 0.0
+        sommes = {}
+        comptes = {}
+        for p in self.scan:
+            rel = p[1] if p[1] <= 180 else p[1] - 360   # -180..180 (0 = devant, + = droite)
+            if -demi_champ <= rel <= demi_champ:
+                b = int(round(rel / taille_bin))
+                sommes[b] = sommes.get(b, 0.0) + p[2]
+                comptes[b] = comptes.get(b, 0) + 1
+        if not comptes:
+            return 0.0
+        best_b = max(comptes, key=lambda b: sommes[b] / comptes[b])
+        return best_b * taille_bin
+
     def pente_moyenne(self, distances):
         if len(distances) < 2:
             return 0

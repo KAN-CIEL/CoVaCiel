@@ -42,18 +42,14 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        # Braquage de virage : biais SOUTENU (prendre le virage avec l'elan) +
-        # coup de volant supplementaire a l'entree qui decroit ; le PID centre par-dessus.
-        self.BIAIS_COURBE = 18     # braquage soutenu maintenu pendant le virage (deg)
-        self.BOOST_ENTREE = 15     # coup de volant supplementaire a l'entree (deg)
-        self.DUREE_BOOST = 0.5     # duree de decroissance du coup de volant d'entree (s)
-        self.t_entree_virage = 0   # instant d'entree dans le virage courant
-        # Securite anti-mur interieur : basee sur le point le PLUS PROCHE du mur
-        # interieur (apex). Sous TAPER_MAX, on rabote progressivement TOUT le braquage
-        # dirige vers l'interieur (biais + centrage) ; sous TAPER_MIN il est annule
-        # -> la voiture se redresse en fin de virage au lieu de couper dans le mur.
-        self.TAPER_MIN = 250       # <= cette distance (mm) : braquage interieur annule
-        self.TAPER_MAX = 500       # >= cette distance (mm) : braquage plein
+        # Navigation reactive : "aller au plus loin" (on vise la direction la plus
+        # degagee devant) + bouclier repulsif qui ecarte des murs proches.
+        # Braquage proportionnel a l'angle de la direction visee -> d'autant plus
+        # fort que le virage est serre.
+        self.K_GAP = 0.6           # deg de braquage par deg d'ecart de la direction degagee
+        self.SEUIL_BOUCLIER = 400  # mm : sous cette distance, le mur le plus proche repousse
+        self.K_BOUCLIER = 0.08     # force de repulsion (deg par mm sous le seuil)
+        self.t_entree_virage = 0   # (conserve pour la machine a etats / vitesse)
 
         #enregistrement
         self.angle = 0
@@ -159,31 +155,23 @@ class CCerveau:
                                     self.last_erreur_centre = 0
                                     self.t_entree_virage = t_now   # lance le boost d'entree
 
-                            # 3. Calcul de la cible : centrage PID dans le couloir
-                            target = self.calc_angle_centre(gauche, droit, dt)
+                            # 3. Calcul de la cible : "FOLLOW THE GAP" + BOUCLIER
+                            # a) On vise la direction la plus degagee (aller au plus loin).
+                            #    rel_gap > 0 = degagement a droite -> braquer a droite (negatif).
+                            #    Braquage proportionnel a l'angle -> plus le virage est serre,
+                            #    plus elle braque fort.
+                            rel_gap = self.gestion_lidar.direction_degagee()
+                            target = -self.K_GAP * rel_gap
 
-                            # Braquage de virage = biais SOUTENU (engage et tient le virage,
-                            # pour le prendre avec l'elan) + coup de volant supplementaire a
-                            # l'entree qui decroit. Le PID de centrage module par-dessus.
-                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
-                                sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
-                                inner = droit if self.etat_voie == "COURBE_DROITE" else gauche
-                                biais = self.BIAIS_COURBE
-                                age = t_now - self.t_entree_virage
-                                if age < self.DUREE_BOOST:
-                                    biais += self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
-                                # Securite anti-mur interieur : on rabote UNIQUEMENT le biais
-                                # (le coup de volant vers l'interieur), d'apres le point le plus
-                                # PROCHE du mur interieur (apex). Le centrage reste TOUJOURS actif
-                                # -> la voiture peut toujours s'ecarter du mur, jamais bloquee
-                                # tout droit le long du mur.
-                                if inner and len(inner) > 0:
-                                    inner_min = min(inner)
-                                    taper = (inner_min - self.TAPER_MIN) / (self.TAPER_MAX - self.TAPER_MIN)
-                                    taper = max(0.0, min(1.0, taper))
-                                else:
-                                    taper = 1.0
-                                target += sens * biais * taper
+                            # b) Bouclier repulsif : si un mur est trop proche, on pousse a
+                            #    l'oppose, d'autant plus fort qu'il est proche.
+                            if plus_proche:
+                                _, ang_proche, dist_proche = plus_proche
+                                if dist_proche < self.SEUIL_BOUCLIER:
+                                    rel_c = ang_proche if ang_proche <= 180 else ang_proche - 360
+                                    force = self.K_BOUCLIER * (self.SEUIL_BOUCLIER - dist_proche)
+                                    # mur a droite (rel_c >= 0) -> on braque a gauche (positif)
+                                    target += force if rel_c >= 0 else -force
 
                             target = max(-30, min(30, target))
 
