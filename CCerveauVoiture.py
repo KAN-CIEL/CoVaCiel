@@ -43,16 +43,14 @@ class CCerveau:
         self.somme_erreur_centre = 0
         self.recul_val = 0
 
-        # Braquage de virage : biais SOUTENU (prendre le virage avec l'elan) +
-        # coup de volant supplementaire a l'entree qui decroit ; le PID centre par-dessus.
-        self.BIAIS_COURBE = 18     # braquage soutenu maintenu pendant le virage (deg)
-        self.BOOST_ENTREE = 15     # coup de volant supplementaire a l'entree (deg)
-        self.DUREE_BOOST = 0.5     # duree de decroissance du coup de volant d'entree (s)
-        self.t_entree_virage = 0   # instant d'entree dans le virage courant
-        # Securite anti-mur interieur : on rabote le biais quand on approche du mur
-        # interieur (apex), d'apres le point le plus proche.
-        self.TAPER_MIN = 250       # <= cette distance (mm) : biais annule
-        self.TAPER_MAX = 500       # >= cette distance (mm) : biais plein
+        # --- FUSION navigation : "aller au plus loin" (pilote) + centrage doux + bouclier ---
+        # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
+        self.K_CENTRE = 0.010      # centrage doux : s'eloigne du mur le plus proche (mur_G ~ mur_D)
+        self.K_GAP = 0.6           # "aller au plus loin" : braquage (deg) par degre d'ecart de la direction degagee
+        self.SEUIL_BOUCLIER = 500  # mm : sous cette distance, le mur le plus proche repousse
+        self.K_BOUCLIER = 0.06     # force de repulsion (deg par mm sous le seuil)
+        self.SEUIL_VIRAGE = 1500   # mm : mur devant plus proche que ca -> etat COURBE (sinon LIGNE_DROITE)
+        self.SENS_GAP = 1          # inversion globale gauche/droite si le braquage part du mauvais cote (1 ou -1)
 
         #enregistrement
         self.angle = 0
@@ -187,40 +185,44 @@ class CCerveau:
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
-                                    self.t_entree_virage = t_now   # relance le boost d'entree
                             else:  # LIGNE_DROITE : on entre en virage des qu'il est detecte
                                 if nouvel_etat != "LIGNE_DROITE":
                                     self.etat_voie = nouvel_etat
                                     self.t_ligne_candidate = 0
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
-                                    self.t_entree_virage = t_now   # lance le boost d'entree
 
-                            # 3. Calcul de la cible : centrage PID dans le couloir
-                            target = self.calc_angle_centre(gauche, droit, dt)
+                            # 3. CIBLE = FUSION : "aller au plus loin" (pilote) + centrage doux + bouclier
+                            # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
+                            if gauche and droit and len(gauche) > 0 and len(droit) > 0:
+                                moy_g = sum(gauche) / len(gauche)
+                                moy_d = sum(droit) / len(droit)
+                            else:
+                                moy_g = moy_d = 0.0
 
-                            # Braquage de virage = biais SOUTENU (engage et tient le virage,
-                            # pour le prendre avec l'elan) + coup de volant supplementaire a
-                            # l'entree qui decroit. Le PID de centrage module par-dessus.
-                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
-                                sens = -1 if self.etat_voie == "COURBE_DROITE" else 1
-                                inner = droit if self.etat_voie == "COURBE_DROITE" else gauche
-                                biais = self.BIAIS_COURBE
-                                age = t_now - self.t_entree_virage
-                                if age < self.DUREE_BOOST:
-                                    biais += self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
-                                # Securite anti-mur interieur : on rabote UNIQUEMENT le biais
-                                # (le coup de volant vers l'interieur), d'apres le point le plus
-                                # PROCHE du mur interieur (apex). Le centrage reste TOUJOURS actif
-                                # -> la voiture peut toujours s'ecarter du mur, jamais bloquee
-                                # tout droit le long du mur.
-                                if inner and len(inner) > 0:
-                                    inner_min = min(inner)
-                                    taper = (inner_min - self.TAPER_MIN) / (self.TAPER_MAX - self.TAPER_MIN)
-                                    taper = max(0.0, min(1.0, taper))
-                                else:
-                                    taper = 1.0
-                                target += sens * biais * taper
+                            # a) Centrage doux : on s'eloigne du mur le plus proche (mur_G ~ mur_D).
+                            #    moy_g > moy_d (mur droit plus proche) -> tourner a GAUCHE (+).
+                            target = self.K_CENTRE * (moy_g - moy_d)
+
+                            # b) Aller au plus loin : direction la plus degagee. Tout droit en ligne
+                            #    droite (rel~0 -> stable, pas d'oscillation), fort vers la sortie en
+                            #    virage (proportionnel -> court en 90, plus long en 180).
+                            #    rel_gap > 0 = ouverture a DROITE -> tourner a DROITE (-).
+                            rel_gap = self.gestion_lidar.direction_degagee()
+                            target += -self.K_GAP * rel_gap
+
+                            # c) Bouclier anti-mur (zones) : mur a DROITE (0-90) -> GAUCHE ;
+                            #    mur a GAUCHE (270-360) -> DROITE. D'autant plus fort qu'il est proche.
+                            if plus_proche and plus_proche[2] < self.SEUIL_BOUCLIER:
+                                ang_p = plus_proche[1]
+                                force = self.K_BOUCLIER * (self.SEUIL_BOUCLIER - plus_proche[2])
+                                if ang_p <= 90:
+                                    target += force      # mur a droite -> tourner a gauche
+                                elif ang_p >= 270:
+                                    target -= force      # mur a gauche -> tourner a droite
+
+                            # Inversion globale si tout le braquage part du mauvais cote (cf. SENS_GAP)
+                            target *= self.SENS_GAP
 
                             target = max(-30, min(30, target))
 
@@ -291,39 +293,25 @@ class CCerveau:
         return -commande
 
     def calc_virage(self, gauche, droit):
-        # Si un cote manque (mur exterieur hors de portee en virage serre),
-        # on NE repart PAS en ligne droite : on garde l'etat courant.
-        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
-            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
-                return self.etat_voie
+        """ Etat = LIGNE_DROITE par defaut. On passe en COURBE seulement quand un mur est
+            detecte DEVANT (vrai virage), pas a chaque correction. Sert surtout a regler la
+            vitesse. Hysteresis sur la distance frontale pour eviter le clignotement. """
+        dist_devant = self.gestion_lidar.get_distance_frontale(demi_angle=25)
+
+        en_courbe = self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE")
+        # On ne SORT du virage que quand la voie redevient bien degagee devant (hysteresis)
+        seuil = self.SEUIL_VIRAGE * 1.4 if en_courbe else self.SEUIL_VIRAGE
+        if dist_devant >= seuil:
             return "LIGNE_DROITE"
 
+        # Mur devant -> virage : on nomme l'etat selon le cote le plus ouvert
+        if not gauche or not droit or len(gauche) == 0 or len(droit) == 0:
+            return self.etat_voie if en_courbe else "LIGNE_DROITE"
         moy_g = sum(gauche) / len(gauche)
         moy_d = sum(droit) / len(droit)
-        diff = moy_g - moy_d   # > 0 : mur gauche plus loin -> virage a DROITE
-
-        dist_devant = self.gestion_lidar.get_distance_frontale()
-
-        SEUIL_ENTREE = 600     # asymetrie pour ENTRER en virage
-        SEUIL_SORTIE = 350     # asymetrie pour SORTIR (hysteresis) : monte -> sort du virage plus tot
-        SEUIL_FRONTAL = 2500
-
-        # Hysteresis : une fois en virage, on y RESTE tant que l'asymetrie reste
-        # marquee. Empeche le clignotement COURBE/LIGNE au milieu d'un virage.
-        if self.etat_voie == "COURBE_DROITE":
-            if diff > SEUIL_SORTIE:
-                return "COURBE_DROITE"
-        elif self.etat_voie == "COURBE_GAUCHE":
-            if -diff > SEUIL_SORTIE:
-                return "COURBE_GAUCHE"
-
-        # Conditions d'ENTREE (la distance frontale ne sert qu'a anticiper l'entree)
-        if diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
-            return "COURBE_DROITE"
-        elif -diff > SEUIL_ENTREE and dist_devant < SEUIL_FRONTAL:
-            return "COURBE_GAUCHE"
-
-        return "LIGNE_DROITE"
+        if moy_g >= moy_d:
+            return "COURBE_GAUCHE"   # plus d'espace a gauche
+        return "COURBE_DROITE"
 
     def stop_detection(self):
         self.lidar.stop_lidar()
