@@ -172,18 +172,18 @@ class CCerveau:
                                 age = t_now - self.t_entree_virage
                                 if age < self.DUREE_BOOST:
                                     biais += self.BOOST_ENTREE * (1 - age / self.DUREE_BOOST)
-                                target += sens * biais
-
-                                # Securite anti-mur interieur : basee sur le point le PLUS
-                                # PROCHE du mur interieur (apex). Quand on s'en approche, on
-                                # rabote TOUT le braquage dirige vers l'interieur (biais +
-                                # centrage) -> la voiture se redresse au lieu de couper dedans.
+                                # Securite anti-mur interieur : on rabote UNIQUEMENT le biais
+                                # (le coup de volant vers l'interieur), d'apres le point le plus
+                                # PROCHE du mur interieur (apex). Le centrage reste TOUJOURS actif
+                                # -> la voiture peut toujours s'ecarter du mur, jamais bloquee
+                                # tout droit le long du mur.
                                 if inner and len(inner) > 0:
                                     inner_min = min(inner)
                                     taper = (inner_min - self.TAPER_MIN) / (self.TAPER_MAX - self.TAPER_MIN)
                                     taper = max(0.0, min(1.0, taper))
-                                    if sens * target > 0:   # braquage dirige vers le mur interieur
-                                        target *= taper
+                                else:
+                                    taper = 1.0
+                                target += sens * biais * taper
 
                             target = max(-30, min(30, target))
 
