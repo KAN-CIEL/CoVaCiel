@@ -9,10 +9,11 @@ import logging
 logging.getLogger('rplidar').setLevel(logging.ERROR)
 
 if __name__ == "__main__":
-    Brain = CCerveau()
-    com = CCommunication()
+    # Une SEULE instance d'enregistreur, partagee par le Cerveau et la Communication #nico1
+    enregistreur = CEnregistreurCovaciel()        #nico1
+    Brain = CCerveau(enregistreur)                #nico1
+    com = CCommunication(recorder=enregistreur)   #nico1
     signal = CSignal()
-    enregistrement = CEnregistreurCovaciel()
             
 
 

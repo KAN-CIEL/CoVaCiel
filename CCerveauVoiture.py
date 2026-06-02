@@ -8,10 +8,11 @@ import datetime
 import os
 
 class CCerveau:
-    def __init__(self):
+    def __init__(self, enregistreur=None):   #nico1
         self.lidar = CDetection()
         self.gestion_lidar = CGestion()
-        self.enregistreur = CEnregistreurCovaciel() #nico
+        # Instance partagee injectee par main.py ; fallback si appel sans argument #nico1
+        self.enregistreur = enregistreur if enregistreur is not None else CEnregistreurCovaciel()  #nico1
         self.last_db_save_t = 0 #nico
 
 
@@ -71,6 +72,36 @@ class CCerveau:
             writer = csv.writer(f)
             writer.writerow([timestamp, etat, f"{angle_dest:.1f}", servo_val, obs_proche_dist, obs_loin_dist])
 
+    def _enregistrer_bdd(self, com, arret_urgence, angle_destination, servo_val, plus_proche, plus_loin):  #nico1
+        """ Prepare et envoie les 4 valeurs a la BDD (appel bride a 5Hz par la boucle). #nico1
+            - angle  : angle physique reel en degres (self.angle), PAS le PWM servo (62-109)
+            - lidar  : 'Oui' si arret d'urgence, 'Non' si voie libre
+            - vitesse / batterie : floats parses en asynchrone par le thread UART (struct) """  #nico1
+        # 1. On demande vitesse (0x06) et batterie (0x09) ; les reponses sont parsees
+        #    en asynchrone par CCommunication._listen et stockees (thread-safe).
+        com.send_command(0x06, b'\x00\x00\x00\x00\x00\x00')   # GET vitesse IMU
+        com.send_command(0x09, b'\x00\x00\x00\x00\x00\x00')   # GET batterie
+
+        # 2. Relecture des dernieres valeurs connues (defaut robuste si com incomplet)
+        vitesse_val = com.get_vitesse() if hasattr(com, "get_vitesse") else 0.0
+        batterie_val = com.get_batterie() if hasattr(com, "get_batterie") else 0.0
+
+        # 3. Statut lidar (chaine) et angle reel en degres
+        lidar_statut = "Oui" if arret_urgence else "Non"
+
+        # 4. Sauvegarde BDD (robuste / thread-safe cote CEnregistrement)
+        self.enregistreur.sauvegarder_donnees(
+            vitesse=vitesse_val,
+            angle=self.angle,
+            lidar_statut=lidar_statut,
+            batterie_val=batterie_val,
+        )
+
+        # 5. Log CSV de debug navigation (separe de la BDD)
+        d_p = plus_proche[2] if plus_proche else "N/A"
+        d_l = plus_loin[2] if plus_loin else "N/A"
+        self.log_data(self.etat_voie, angle_destination, servo_val, d_p, d_l)
+
     def start_detection(self, signal, com):
         if self.lidar.start_lidar():
             com.start()
@@ -80,7 +111,6 @@ class CCerveau:
 
                 angle_destination = 0.0
                 servo_val = 86
-                vitesse_imu = 0 #nico
 
                 for scan in scans:
                     try:
@@ -92,6 +122,15 @@ class CCerveau:
                         gauche, droit = self.gestion_lidar.get_secteurs()
 
                         t_now = time.time()
+
+                        # Statut d'arret d'urgence (obstacle trop proche) -> sert au champ "lidar" #nico1
+                        arret_urgence = bool(plus_proche and plus_proche[2] < self.distance_arret)  #nico1
+
+                        # --- ENREGISTREMENT BDD bride a 5Hz (TOUJOURS, meme en arret d'urgence) --- #nico1
+                        if t_now - self.last_db_save_t > 0.2:                                        #nico1
+                            self._enregistrer_bdd(com, arret_urgence, angle_destination, servo_val,  #nico1
+                                                  plus_proche, plus_loin)                            #nico1
+                            self.last_db_save_t = t_now                                              #nico1
 
                         # --- LOGIQUE DE SECURITE / MARCHE ARRIERE ---
                         # On ne traite la marche arriere que s'il existe un obstacle proche.
@@ -207,45 +246,6 @@ class CCerveau:
 
                             self.last_cmd_t = t_now
 
-                        # --- nico: Sauvegarde des donnees ---
-                        # On ne sauvegarde pas a 20Hz (trop rapide pour MySQL), on le fait a 5Hz (toutes les 0.2s)
-                        if t_now - self.last_db_save_t > 0.2:
-                            # lidar_val = distance de l'obstacle le plus proche
-                            dist_lidar = plus_proche[2] if plus_proche else 0
-
-                            # 2. Lecture de la Batterie (Commande 0x09)
-                            batterie_val = 0.0
-                            trame_batterie = com.send_command(0x09, b'\x00\x00\x00\x00\x00\x00')
-
-                            # Si la carte repond bien et renvoie assez d'octets
-                            if trame_batterie and len(trame_batterie) >= 2:
-                                # On colle l'octet 0 (poids fort) et l'octet 1 (poids faible)
-                                batterie_brute = (trame_batterie[0] << 8) | trame_batterie[1]
-                                # On divise par 100 comme demande
-                                batterie_val = batterie_brute / 100.0
-
-                            # 3. Lecture de la vitesse IMU (Commande 0x06)
-                            trame_vitesse_imu = com.send_command(0x06, b'\x00\x00\x00\x00\x00\x00') #nico
-
-                            if trame_vitesse_imu and len(trame_vitesse_imu) >= 2: #nico
-                                vitesse_imu = (trame_vitesse_imu[0] << 8) | trame_vitesse_imu[1] #nico
-                                vitesse_imu = vitesse_imu / 100.0 #nico
-
-                            # On appelle la fonction avec les variables de CCerveau
-                            self.enregistreur.sauvegarder_donnees(
-                                vitesse=vitesse_imu,
-                                angle=servo_val,
-                                lidar_val=dist_lidar,
-                                batterie_val=batterie_val
-                            )
-                            self.last_db_save_t = t_now
-                            #plus nico
-
-                            # Log des donnees
-                            d_p = plus_proche[2] if plus_proche else "N/A"
-                            d_l = plus_loin[2] if plus_loin else "N/A"
-                            self.log_data(self.etat_voie, angle_destination, servo_val, d_p, d_l)
-
                         # Signal d'arret externe
                         if signal.read_signal() == "STOP":
                             com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
@@ -260,7 +260,8 @@ class CCerveau:
                 print(f"Erreur majeure : {e}")
             finally:
                 self.lidar.stop_lidar()
-                self.enregistreur.fermer() #nico
+                # NB : on NE ferme PAS l'enregistreur ici : c'est une instance partagee qui #nico1
+                # doit persister entre les courses (GO/STOP). Elle se ferme a l'arret du programme. #nico1
 
     def conversion_angle(self, angle):
         """ Mappe -30/+30 vers 62/109 (Milieu 86) """
