@@ -156,12 +156,13 @@ class CCerveau:
                                     self.t_entree_virage = t_now   # lance le boost d'entree
 
                             # 3. Calcul de la cible : "FOLLOW THE GAP" + BOUCLIER
+                            # NB : la convention gauche/droite est INVERSEE cote materiel,
+                            # donc on prend le signe oppose a la logique standard.
                             # a) On vise la direction la plus degagee (aller au plus loin).
-                            #    rel_gap > 0 = degagement a droite -> braquer a droite (negatif).
                             #    Braquage proportionnel a l'angle -> plus le virage est serre,
                             #    plus elle braque fort.
                             rel_gap = self.gestion_lidar.direction_degagee()
-                            target = -self.K_GAP * rel_gap
+                            target = self.K_GAP * rel_gap
 
                             # b) Bouclier repulsif : si un mur est trop proche, on pousse a
                             #    l'oppose, d'autant plus fort qu'il est proche.
@@ -170,8 +171,8 @@ class CCerveau:
                                 if dist_proche < self.SEUIL_BOUCLIER:
                                     rel_c = ang_proche if ang_proche <= 180 else ang_proche - 360
                                     force = self.K_BOUCLIER * (self.SEUIL_BOUCLIER - dist_proche)
-                                    # mur a droite (rel_c >= 0) -> on braque a gauche (positif)
-                                    target += force if rel_c >= 0 else -force
+                                    # mur d'un cote -> on pousse a l'oppose (convention inversee)
+                                    target += -force if rel_c >= 0 else force
 
                             target = max(-30, min(30, target))
 
