@@ -47,9 +47,9 @@ class CCerveau:
         # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
         self.K_CENTRE = 0.010      # centrage doux : s'eloigne du mur le plus proche (mur_G ~ mur_D)
         self.K_GAP = 0.6           # "aller au plus loin" : braquage (deg) par degre d'ecart de la direction degagee
-        self.SEUIL_BOUCLIER = 500  # mm : sous cette distance, le mur le plus proche repousse
+        self.SEUIL_BOUCLIER = 700  # mm : sous cette distance, le mur le plus proche repousse (+ tot, + loin)
         self.K_BOUCLIER = 0.06     # force de repulsion (deg par mm sous le seuil)
-        self.SEUIL_VIRAGE = 1500   # mm : mur devant plus proche que ca -> etat COURBE (sinon LIGNE_DROITE)
+        self.SEUIL_VIRAGE = 2000   # mm : mur devant plus proche que ca -> etat COURBE (detection plus tot)
         self.SENS_GAP = -1         # inversion globale gauche/droite (convention LIDAR/servo inversee cote materiel)
 
         #enregistrement
@@ -227,8 +227,8 @@ class CCerveau:
 
                             target = max(-30, min(30, target))
 
-                            # 4. Lissage passe-bas (60% ancienne, 40% nouvelle = plus lisse, moins d'oscillation)
-                            angle_destination = (angle_destination * 0.6) + (target * 0.4)
+                            # 4. Lissage passe-bas (50% ancienne, 50% nouvelle = plus reactif)
+                            angle_destination = (angle_destination * 0.5) + (target * 0.5)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))
