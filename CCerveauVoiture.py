@@ -50,7 +50,7 @@ class CCerveau:
         self.SEUIL_BOUCLIER = 500  # mm : sous cette distance, le mur le plus proche repousse
         self.K_BOUCLIER = 0.06     # force de repulsion (deg par mm sous le seuil)
         self.SEUIL_VIRAGE = 1500   # mm : mur devant plus proche que ca -> etat COURBE (sinon LIGNE_DROITE)
-        self.SENS_GAP = 1          # inversion globale gauche/droite si le braquage part du mauvais cote (1 ou -1)
+        self.SENS_GAP = -1         # inversion globale gauche/droite (convention LIDAR/servo inversee cote materiel)
 
         #enregistrement
         self.angle = 0
@@ -136,15 +136,16 @@ class CCerveau:
                             _, _, d_proche_val = plus_proche
 
                             if d_proche_val < self.distance_arret :
+                                # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x3e <-> 0x6d
                                 if self.etat_voie == "COURBE_GAUCHE":
-                                    self.recul_val = 0x3e
-                                elif self.etat_voie == "COURBE_DROITE":
                                     self.recul_val = 0x6d
+                                elif self.etat_voie == "COURBE_DROITE":
+                                    self.recul_val = 0x3e
                                 elif self.etat_voie == "LIGNE_DROITE":
                                     if plus_proche[1] < 60:
-                                        self.recul_val = 0x6d
-                                    elif plus_proche[1] > 300:
                                         self.recul_val = 0x3e
+                                    elif plus_proche[1] > 300:
+                                        self.recul_val = 0x6d
 
                                 print(f"!!! STOP : {d_proche_val}mm !!!")
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
