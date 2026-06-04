@@ -227,8 +227,8 @@ class CCerveau:
 
                             target = max(-30, min(30, target))
 
-                            # 4. Lissage passe-bas (50% ancienne, 50% nouvelle = plus reactif)
-                            angle_destination = (angle_destination * 0.5) + (target * 0.5)
+                            # 4. Lissage passe-bas (70% ancienne, 30% nouvelle = braquage progressif, moins sec)
+                            angle_destination = (angle_destination * 0.7) + (target * 0.3)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))
