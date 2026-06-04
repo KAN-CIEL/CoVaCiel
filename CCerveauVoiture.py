@@ -42,13 +42,15 @@ class CCerveau:
         self.last_erreur_centre = 0
         self.somme_erreur_centre = 0
         self.recul_val = 0
+        self.temps_fin_recul = 0   # fin de la fenetre de marche arriere soutenue
+        self.DUREE_RECUL = 1.5     # duree minimale de marche arriere (s) -- quoi qu'il arrive
 
         # --- FUSION navigation : "aller au plus loin" (pilote) + centrage doux + bouclier ---
         # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
         self.K_CENTRE = 0.010      # centrage doux : s'eloigne du mur le plus proche (mur_G ~ mur_D)
         self.K_GAP = 0.6           # "aller au plus loin" : braquage (deg) par degre d'ecart de la direction degagee
-        self.SEUIL_BOUCLIER = 700  # mm : sous cette distance, le mur le plus proche repousse (+ tot, + loin)
-        self.K_BOUCLIER = 0.06     # force de repulsion (deg par mm sous le seuil)
+        self.SEUIL_BOUCLIER = 900  # mm : sous cette distance, le mur le plus proche repousse (+ tot, + loin)
+        self.K_BOUCLIER = 0.08     # force de repulsion (deg par mm sous le seuil) -- pousse + fort
         self.SEUIL_VIRAGE = 2000   # mm : mur devant plus proche que ca -> etat COURBE (detection plus tot)
         self.SENS_GAP = -1         # inversion globale gauche/droite (convention LIDAR/servo inversee cote materiel)
 
@@ -121,8 +123,12 @@ class CCerveau:
 
                         t_now = time.time()
 
-                        # Statut d'arret d'urgence (obstacle trop proche) -> sert au champ "lidar" #nico1
-                        arret_urgence = bool(plus_proche and plus_proche[2] < self.distance_arret)  #nico1
+                        # Distance de l'obstacle DROIT DEVANT (cone etroit) : un mur lateral de
+                        # couloir ne doit PAS declencher la marche arriere.
+                        dist_frontale = self.gestion_lidar.distance_frontale_min()
+
+                        # Statut d'arret d'urgence (obstacle proche DEVANT) -> sert au champ "lidar" #nico1
+                        arret_urgence = bool(dist_frontale < self.distance_arret)  #nico1
 
                         # --- ENREGISTREMENT BDD bride a 5Hz (TOUJOURS, meme en arret d'urgence) --- #nico1
                         if t_now - self.last_db_save_t > 0.2:                                        #nico1
@@ -130,28 +136,27 @@ class CCerveau:
                                                   plus_proche, plus_loin)                            #nico1
                             self.last_db_save_t = t_now                                              #nico1
 
-                        # --- LOGIQUE DE SECURITE / MARCHE ARRIERE ---
-                        # On ne traite la marche arriere que s'il existe un obstacle proche.
-                        if plus_proche:
-                            _, _, d_proche_val = plus_proche
-
-                            if d_proche_val < self.distance_arret :
+                        # --- MARCHE ARRIERE SOUTENUE (>= DUREE_RECUL), seulement si obstacle DEVANT ---
+                        # Nouveau declenchement : on choisit le sens et on arme une fenetre de recul.
+                        if dist_frontale < self.distance_arret and t_now >= self.temps_fin_recul:
+                                self.temps_fin_recul = t_now + self.DUREE_RECUL
                                 # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x3e <-> 0x6d
                                 if self.etat_voie == "COURBE_GAUCHE":
                                     self.recul_val = 0x6d
                                 elif self.etat_voie == "COURBE_DROITE":
                                     self.recul_val = 0x3e
                                 elif self.etat_voie == "LIGNE_DROITE":
-                                    if plus_proche[1] < 60:
+                                    if plus_proche and plus_proche[1] < 60:
                                         self.recul_val = 0x3e
-                                    elif plus_proche[1] > 300:
+                                    elif plus_proche and plus_proche[1] > 300:
                                         self.recul_val = 0x6d
+                                print(f"!!! STOP : {dist_frontale:.0f}mm -> recul {self.DUREE_RECUL}s !!!")
 
-                                print(f"!!! STOP : {d_proche_val}mm !!!")
+                        # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
+                        if t_now < self.temps_fin_recul:
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
                                 com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
-                                self.temps_fin_recul = t_now + 2.5
                                 continue
 
                         # --- LOGIQUE DE NAVIGATION (20Hz) ---

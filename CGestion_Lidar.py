@@ -42,6 +42,15 @@ class CGestion:
             return 4000
         return sum(pts) / len(pts)
 
+    def distance_frontale_min(self, demi_angle=30):
+        """ Distance du point le plus proche DROIT DEVANT (cone +/- demi_angle).
+            Sert a l'arret d'urgence : un mur LATERAL (couloir etroit) ne doit PAS
+            declencher la marche arriere, seulement un obstacle vraiment devant. """
+        dists = [p[2] for p in self.scan if p[1] <= demi_angle or p[1] >= 360 - demi_angle]
+        if not dists:
+            return 9999
+        return min(dists)
+
     def direction_degagee(self, demi_champ=80, taille_bin=10):
         """ Angle relatif (deg ; + = droite, - = gauche) de la direction la PLUS
             DEGAGEE devant la voiture : on decoupe le champ avant en secteurs et on
