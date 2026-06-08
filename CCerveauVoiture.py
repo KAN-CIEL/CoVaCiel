@@ -53,6 +53,7 @@ class CCerveau:
         self.K_BOUCLIER = 0.08     # force de repulsion (deg par mm sous le seuil) -- pousse + fort
         self.SEUIL_VIRAGE = 2000   # mm : mur devant plus proche que ca -> etat COURBE (detection plus tot)
         self.SENS_GAP = -1         # inversion globale gauche/droite (convention LIDAR/servo inversee cote materiel)
+        self.BIAIS_FORCE = 20      # braquage FORCE ajoute dans le sens du virage (deg) ; le PID regule autour
 
         #enregistrement
         self.angle = 0
@@ -198,26 +199,24 @@ class CCerveau:
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
 
-                            # 3. CIBLE = FUSION : "aller au plus loin" (pilote) + centrage doux + bouclier
+                            # 3. CIBLE = "aller au plus loin" (gap) + PID de centrage + braquage FORCE en virage + bouclier
                             # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
-                            if gauche and droit and len(gauche) > 0 and len(droit) > 0:
-                                moy_g = sum(gauche) / len(gauche)
-                                moy_d = sum(droit) / len(droit)
-                            else:
-                                moy_g = moy_d = 0.0
 
-                            # a) Centrage doux : on s'eloigne du mur le plus proche (mur_G ~ mur_D).
-                            #    moy_g > moy_d (mur droit plus proche) -> tourner a GAUCHE (+).
-                            target = self.K_CENTRE * (moy_g - moy_d)
+                            # a) PID de centrage (P + I + D) : regule la trajectoire en douceur.
+                            target = -self.calc_angle_centre(gauche, droit, dt)
 
-                            # b) Aller au plus loin : direction la plus degagee. Tout droit en ligne
-                            #    droite (rel~0 -> stable, pas d'oscillation), fort vers la sortie en
-                            #    virage (proportionnel -> court en 90, plus long en 180).
+                            # b) Aller au plus loin : direction la plus degagee.
                             #    rel_gap > 0 = ouverture a DROITE -> tourner a DROITE (-).
                             rel_gap = self.gestion_lidar.direction_degagee()
                             target += -self.K_GAP * rel_gap
 
-                            # c) Bouclier anti-mur (zones) : mur a DROITE (0-90) -> GAUCHE ;
+                            # c) En VIRAGE : on FORCE un braquage (valeur fixe ajoutee dans le sens du
+                            #    virage) ; le PID + le gap regulent autour -> plus de "braquage fort minute".
+                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
+                                sens = 1 if self.etat_voie == "COURBE_GAUCHE" else -1
+                                target += sens * self.BIAIS_FORCE
+
+                            # d) Bouclier anti-mur (zones) : mur a DROITE (0-90) -> GAUCHE ;
                             #    mur a GAUCHE (270-360) -> DROITE. D'autant plus fort qu'il est proche.
                             if plus_proche and plus_proche[2] < self.SEUIL_BOUCLIER:
                                 ang_p = plus_proche[1]
