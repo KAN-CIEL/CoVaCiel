@@ -59,6 +59,10 @@ class CCerveau:
         # --- FOLLOW-THE-GAP (braquage principal) ---
         self.K_STEER = 0.7         # braquage (deg de servo) par degre d'ecart du cap FTG vise
         self.FTG_BULLE_DEG = 20    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
+        # Centrage doux : le FTG seul longe le mur interieur (il "coupe") ; cette correction
+        # repousse du mur lateral le plus proche pour rester au milieu du couloir.
+        self.K_CENTRE_FTG = 0.008  # deg de braquage par mm d'ecart (mur_gauche - mur_droit)
+        self.CENTRE_MAX = 8        # deg : plafond de la correction de centrage (reste secondaire au FTG)
 
         #enregistrement
         self.angle = 0
@@ -223,9 +227,21 @@ class CCerveau:
                                 rayon_bulle_deg=self.FTG_BULLE_DEG,
                             )
 
-                            # Conversion cap -> braquage. Signe identique a l'ancien code (qui
-                            # braquait DU BON COTE) : -K_STEER*cap puis inversion materielle SENS_GAP.
+                            # a) Braquage FTG : viser l'ouverture la plus degagee.
                             target = -self.K_STEER * cap
+
+                            # b) Centrage doux : repousse du mur lateral le plus proche pour
+                            #    rester au milieu du couloir (corrige le "longe l'interieur" du
+                            #    FTG pur, surtout en ligne droite). Borne -> reste secondaire.
+                            #    moy_g = mur GAUCHE, moy_d = mur DROIT.
+                            if gauche and droit:
+                                moy_g = sum(gauche) / len(gauche)
+                                moy_d = sum(droit) / len(droit)
+                                corr = self.K_CENTRE_FTG * (moy_g - moy_d)
+                                corr = max(-self.CENTRE_MAX, min(self.CENTRE_MAX, corr))
+                                target += corr
+
+                            # Inversion materielle (cf. SENS_GAP) appliquee a l'ensemble.
                             target *= self.SENS_GAP
 
                             target = max(-30, min(30, target))
