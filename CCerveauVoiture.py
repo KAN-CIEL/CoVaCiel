@@ -57,12 +57,17 @@ class CCerveau:
         self.BIAIS_FORCE = 10      # braquage FORCE ajoute dans le sens du virage (deg) ; le PID regule autour
 
         # --- FOLLOW-THE-GAP (braquage principal) ---
-        self.K_STEER = 0.7         # braquage (deg de servo) par degre d'ecart du cap FTG vise
+        self.K_STEER = 0.8         # braquage (deg de servo) par degre d'ecart du cap FTG vise
         self.FTG_BULLE_DEG = 20    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
         # Centrage doux : le FTG seul longe le mur interieur (il "coupe") ; cette correction
-        # repousse du mur lateral le plus proche pour rester au milieu du couloir.
+        # repousse du mur lateral le plus proche pour rester au milieu du couloir EN LIGNE DROITE.
         self.K_CENTRE_FTG = 0.008  # deg de braquage par mm d'ecart (mur_gauche - mur_droit)
         self.CENTRE_MAX = 8        # deg : plafond de la correction de centrage (reste secondaire au FTG)
+        # Renfort de virage : le FTG pur se redresse trop tot et SOUS-VIRE en fin de courbe.
+        # Quand un mur se rapproche DEVANT en courbe, on accentue le braquage dans le sens du virage.
+        self.SEUIL_RENFORT = 1200  # mm : sous cette distance frontale, on renforce le virage
+        self.K_RENFORT = 0.02      # deg de braquage par mm sous le seuil
+        self.RENFORT_MAX = 18      # deg : plafond du renfort de virage
 
         #enregistrement
         self.angle = 0
@@ -230,16 +235,30 @@ class CCerveau:
                             # a) Braquage FTG : viser l'ouverture la plus degagee.
                             target = -self.K_STEER * cap
 
-                            # b) Centrage doux : repousse du mur lateral le plus proche pour
-                            #    rester au milieu du couloir (corrige le "longe l'interieur" du
-                            #    FTG pur, surtout en ligne droite). Borne -> reste secondaire.
-                            #    moy_g = mur GAUCHE, moy_d = mur DROIT.
+                            # b) Centrage doux (LIGNE DROITE) : repousse du mur lateral le plus
+                            #    proche pour rester au milieu du couloir. ATTENUE quand le cap FTG
+                            #    est fort (virage) : sinon il pousse vers l'EXTERIEUR et fait
+                            #    SOUS-VIRER la voiture. moy_g = mur GAUCHE, moy_d = mur DROIT.
                             if gauche and droit:
                                 moy_g = sum(gauche) / len(gauche)
                                 moy_d = sum(droit) / len(droit)
                                 corr = self.K_CENTRE_FTG * (moy_g - moy_d)
                                 corr = max(-self.CENTRE_MAX, min(self.CENTRE_MAX, corr))
-                                target += corr
+                                attenuation = max(0.0, 1.0 - abs(cap) / 25.0)  # 1 a 0deg -> 0 des 25deg
+                                target += corr * attenuation
+
+                            # c) Renfort de virage : quand un mur se rapproche DEVANT en courbe,
+                            #    on accentue le braquage dans le sens du virage (le FTG pur se
+                            #    redresse trop tot -> clippe le mur). D'autant plus fort que le mur
+                            #    frontal est proche. pre-SENS : negatif = DROITE (apres *SENS_GAP).
+                            if self.etat_voie in ("COURBE_GAUCHE", "COURBE_DROITE") \
+                                    and dist_frontale < self.SEUIL_RENFORT:
+                                renfort = min(self.RENFORT_MAX,
+                                              self.K_RENFORT * (self.SEUIL_RENFORT - dist_frontale))
+                                if self.etat_voie == "COURBE_DROITE":
+                                    target -= renfort   # tourne PLUS a droite
+                                else:
+                                    target += renfort   # tourne PLUS a gauche
 
                             # Inversion materielle (cf. SENS_GAP) appliquee a l'ensemble.
                             target *= self.SENS_GAP
