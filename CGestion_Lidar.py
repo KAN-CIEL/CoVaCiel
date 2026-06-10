@@ -70,6 +70,62 @@ class CGestion:
         best_b = max(comptes, key=lambda b: sommes[b] / comptes[b])
         return best_b * taille_bin
 
+    def direction_ftg(self, demi_champ=90, taille_bin=2, rayon_bulle_deg=24,
+                      seuil_gap=1200, dist_max_vue=4000):
+        """ FOLLOW-THE-GAP. Renvoie (cap_relatif_deg, profondeur_mm) :
+            - cap_relatif_deg : angle vers lequel piloter (+ = droite, 0 = devant) ;
+            - profondeur_mm   : distance libre dans la direction visee.
+
+            Etapes :
+            1. On echantillonne le champ avant en bins angulaires ; chaque bin recoit la
+               distance MIN des points qui y tombent (le pire cas = securite). Un bin sans
+               point est suppose LIBRE (dist_max_vue) : un angle sans echo = mur > 4 m.
+            2. BULLE DE SECURITE : on met a 0 les bins autour de l'obstacle le plus proche
+               (+/- rayon_bulle_deg) -> on s'interdit de viser le mur le plus proche.
+            3. On cherche le PLUS GRAND TROU (suite de bins > seuil_gap) et on vise son
+               CENTRE (stable). Si aucun trou franc -> on vise le bin le plus profond. """
+        if not self.scan:
+            return 0.0, 0.0
+
+        n_bins = int(2 * demi_champ / taille_bin) + 1
+        INF = float(dist_max_vue)
+        dists = [INF] * n_bins   # bin i -> angle (-demi_champ + i*taille_bin)
+        for p in self.scan:
+            rel = p[1] if p[1] <= 180 else p[1] - 360
+            if -demi_champ <= rel <= demi_champ:
+                i = int(round((rel + demi_champ) / taille_bin))
+                if 0 <= i < n_bins and p[2] < dists[i]:
+                    dists[i] = p[2]
+
+        # 1. Bulle de securite autour du mur le plus proche
+        i_proche = min(range(n_bins), key=lambda i: dists[i])
+        demi_bulle = int(rayon_bulle_deg / taille_bin)
+        for j in range(max(0, i_proche - demi_bulle), min(n_bins, i_proche + demi_bulle + 1)):
+            dists[j] = 0.0
+
+        # 2. Plus grand trou (suite continue de bins au-dessus du seuil)
+        meil_debut = meil_fin = -1
+        meil_len = 0
+        debut = -1
+        for i in range(n_bins):
+            if dists[i] > seuil_gap:
+                if debut < 0:
+                    debut = i
+                if i - debut + 1 > meil_len:
+                    meil_len = i - debut + 1
+                    meil_debut, meil_fin = debut, i
+            else:
+                debut = -1
+
+        # 3. Cible : centre du plus grand trou (ou bin le plus profond si aucun trou franc)
+        if meil_fin < 0:
+            i_cible = max(range(n_bins), key=lambda i: dists[i])
+        else:
+            i_cible = (meil_debut + meil_fin) // 2
+
+        cap = -demi_champ + i_cible * taille_bin
+        return float(cap), float(dists[i_cible])
+
     def pente_moyenne(self, distances):
         if len(distances) < 2:
             return 0

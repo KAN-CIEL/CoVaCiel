@@ -56,6 +56,11 @@ class CCerveau:
         self.SENS_GAP = -1         # inversion globale gauche/droite (convention LIDAR/servo inversee cote materiel)
         self.BIAIS_FORCE = 10      # braquage FORCE ajoute dans le sens du virage (deg) ; le PID regule autour
 
+        # --- FOLLOW-THE-GAP (braquage principal) ---
+        self.K_STEER = 0.7         # braquage (deg de servo) par degre d'ecart du cap FTG vise
+        self.FTG_BULLE_DEG = 24    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
+        self.FTG_SEUIL_GAP = 1200  # mm : un bin plus loin que ca compte comme "espace libre" (trou)
+
         #enregistrement
         self.angle = 0
 
@@ -210,38 +215,19 @@ class CCerveau:
                                     self.somme_erreur_centre = 0
                                     self.last_erreur_centre = 0
 
-                            # 3. CIBLE = "aller au plus loin" (gap) + PID de centrage + braquage FORCE en virage + bouclier
-                            # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
+                            # 3. CIBLE = FOLLOW-THE-GAP : on vise le CENTRE du plus grand espace
+                            #    libre devant, apres avoir masque une bulle de securite autour du mur
+                            #    le plus proche. UN SEUL terme coherent -> evite les murs par
+                            #    construction, fini les 4 termes qui se battaient et qui saturaient.
+                            #    cap > 0 = ouverture a DROITE.
+                            cap, profondeur_gap = self.gestion_lidar.direction_ftg(
+                                rayon_bulle_deg=self.FTG_BULLE_DEG,
+                                seuil_gap=self.FTG_SEUIL_GAP,
+                            )
 
-                            # a) PID de centrage (P + I + D) : regule la trajectoire en douceur.
-                            target = -self.calc_angle_centre(gauche, droit, dt)
-
-                            # b) Aller au plus loin : direction la plus degagee.
-                            #    rel_gap > 0 = ouverture a DROITE -> tourner a DROITE (-).
-                            rel_gap = self.gestion_lidar.direction_degagee()
-                            target += -self.K_GAP * rel_gap
-
-                            # c) En VIRAGE : on FORCE un braquage (valeur fixe ajoutee dans le sens du
-                            #    virage) ; le PID + le gap regulent autour -> plus de "braquage fort minute".
-                            if self.etat_voie in ("COURBE_DROITE", "COURBE_GAUCHE"):
-                                sens = 1 if self.etat_voie == "COURBE_GAUCHE" else -1
-                                target += sens * self.BIAIS_FORCE
-
-                            # d) Bouclier anti-mur LATERAL : mur a DROITE (25-90) -> GAUCHE ;
-                            #    mur a GAUCHE (270-335) -> DROITE. Force BORNEE (BOUCLIER_MAX) pour ne pas
-                            #    saturer a elle seule, et zones laterales seulement : un point pile DEVANT
-                            #    (~0deg) ne doit PAS faire braquer a gauche arbitrairement (il est deja
-                            #    gere par le gap et la marche arriere).
-                            if plus_proche and plus_proche[2] < self.SEUIL_BOUCLIER:
-                                ang_p = plus_proche[1]
-                                force = min(self.BOUCLIER_MAX,
-                                            self.K_BOUCLIER * (self.SEUIL_BOUCLIER - plus_proche[2]))
-                                if 25 <= ang_p <= 90:
-                                    target += force      # mur a droite -> tourner a gauche
-                                elif 270 <= ang_p <= 335:
-                                    target -= force      # mur a gauche -> tourner a droite
-
-                            # Inversion globale si tout le braquage part du mauvais cote (cf. SENS_GAP)
+                            # Conversion cap -> braquage. Signe identique a l'ancien code (qui
+                            # braquait DU BON COTE) : -K_STEER*cap puis inversion materielle SENS_GAP.
+                            target = -self.K_STEER * cap
                             target *= self.SENS_GAP
 
                             target = max(-30, min(30, target))
