@@ -58,8 +58,7 @@ class CCerveau:
 
         # --- FOLLOW-THE-GAP (braquage principal) ---
         self.K_STEER = 0.7         # braquage (deg de servo) par degre d'ecart du cap FTG vise
-        self.FTG_BULLE_DEG = 24    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
-        self.FTG_SEUIL_GAP = 1200  # mm : un bin plus loin que ca compte comme "espace libre" (trou)
+        self.FTG_BULLE_DEG = 20    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
 
         #enregistrement
         self.angle = 0
@@ -222,7 +221,6 @@ class CCerveau:
                             #    cap > 0 = ouverture a DROITE.
                             cap, profondeur_gap = self.gestion_lidar.direction_ftg(
                                 rayon_bulle_deg=self.FTG_BULLE_DEG,
-                                seuil_gap=self.FTG_SEUIL_GAP,
                             )
 
                             # Conversion cap -> braquage. Signe identique a l'ancien code (qui
