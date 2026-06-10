@@ -1,0 +1,14 @@
+# Regles udev CoVACIEL : noms de ports FIXES par identite materielle.
+# Installer sur le Raspberry :
+#   sudo cp 99-covaciel.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+# Verifier : ls -l /dev/lidar /dev/xbee /dev/carte
+
+# LIDAR RPLidar (Silicon Labs CP2102)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="lidar"
+
+# XBEE (FTDI FT232)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6001", SYMLINK+="xbee"
+
+# Carte moteur (Arduino) -- identifiee aussi par son numero de serie (unique)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0074", ATTRS{serial}=="310C21305931323441C133334B57303F", SYMLINK+="carte"

@@ -9,7 +9,7 @@ from CSignal_XBEE import CSignal
 from CCerveauVoiture import CCerveau
 
 class CCommunication:
-    def __init__(self, port="/dev/ttyACM0", baud=9600, timeout=0.1, recorder=None):   #nico1
+    def __init__(self, port="/dev/carte", baud=9600, timeout=0.1, recorder=None):   #nico1
         self.PORT = port
         self.BAUD = baud
         self.timeout = timeout

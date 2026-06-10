@@ -6,10 +6,10 @@ class CDetection:
     def __init__(self):
 
         self.lidar = None
-        self.PORT = '/dev/ttyUSB1'
+        self.PORT = '/dev/lidar'   # symlink fixe (udev) -> CP2102 du RPLidar
         self.BAUDERATE = 256000
         self.timeout = 3
-    
+
     def start_lidar(self):
         try:
             self.lidar = RPLidar(self.PORT, self.BAUDERATE, self.timeout)
@@ -25,7 +25,7 @@ class CDetection:
         except Exception as e:
             print(f"Erreur de connexion au LIDAR: {e}")
             return False
-    
+
     def stop_lidar(self):
         # On v?rifie si l'objet lidar existe
         if self.lidar:
