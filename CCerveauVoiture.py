@@ -16,7 +16,7 @@ class CCerveau:
         self.last_db_save_t = 0 #nico
 
 
-        self.distance_arret = 200 # mm
+        self.distance_arret = 250 # mm  (releve de 200 -> reagit un peu plus tot, moins de contact)
         self.distances_urgence = 400
         self.SEUIL_MUR_INT = 450 # mm
         self.SEUIL_MUR_EXT = 300 # mm
@@ -34,8 +34,8 @@ class CCerveau:
         # Gains PID pour le centrage (Ligne Droite)
         # I et D sont normalises par dt : valeurs rescalees pour rester
         # equivalentes a l'ancien reglage a 20 Hz (Ki/dt et Kd*dt avec dt=0.05).
-        self.Kp_centre = 0.025    # gain proportionnel du centrage (reduit -> moins d'oscillation)
-        self.Ki_centre = 0.02
+        self.Kp_centre = 0.035    # gain proportionnel du centrage (reduit -> moins d'oscillation)
+        self.Ki_centre = 0.05
         self.Kd_centre = 0.001    # derivee reduite -> n'amplifie plus le bruit des secteurs
 
         # Memoires separees pour eviter les coups de raquette
@@ -44,12 +44,11 @@ class CCerveau:
         self.recul_val = 0
         self.temps_fin_recul = 0   # fin de la fenetre de marche arriere soutenue
         self.DUREE_RECUL = 1.5     # duree minimale de marche arriere (s) -- quoi qu'il arrive
-        self.reculs_consecutifs = 0  # nb de reculs rapproches d'affilee (detection "coince")
 
         # --- FUSION navigation : "aller au plus loin" (pilote) + centrage doux + bouclier ---
         # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
         self.K_CENTRE = 0.010      # centrage doux : s'eloigne du mur le plus proche (mur_G ~ mur_D)
-        self.K_GAP = 0.6           # "aller au plus loin" : braquage (deg) par degre d'ecart de la direction degagee
+        self.K_GAP = 0.4           # "aller au plus loin" : braquage (deg) par degre d'ecart (reduit -> moins de saturation)
         self.SEUIL_BOUCLIER = 900  # mm : sous cette distance, le mur le plus proche repousse (+ tot, + loin)
         self.K_BOUCLIER = 0.02     # force de repulsion (deg par mm sous le seuil) -- reduit : ne sature plus a lui seul
         self.BOUCLIER_MAX = 15     # deg : plafond de la contribution bouclier (anti-saturation)
@@ -151,36 +150,25 @@ class CCerveau:
                         # --- MARCHE ARRIERE SOUTENUE (>= DUREE_RECUL), seulement si obstacle DEVANT ---
                         # Nouveau declenchement : on choisit le sens et on arme une fenetre de recul.
                         if dist_frontale < self.distance_arret and t_now >= self.temps_fin_recul:
-                                # Detection "coince" : si on re-declenche un recul juste apres la fin du
-                                # precedent, c'est qu'on retape le meme mur -> on compte les reculs en boucle.
-                                if t_now - self.temps_fin_recul < 1.0:
-                                    self.reculs_consecutifs += 1
-                                else:
-                                    self.reculs_consecutifs = 0
-
                                 self.temps_fin_recul = t_now + self.DUREE_RECUL
-
-                                # On RECULE en braquant vers le cote le PLUS OUVERT (au lieu de figer le
-                                # sens sur l'etat) -> la voiture se degage vers l'espace libre.
-                                # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x6d = espace gauche,
-                                # 0x3e = espace droite.
-                                moy_g = sum(gauche) / len(gauche) if gauche else 0
-                                moy_d = sum(droit) / len(droit) if droit else 0
-                                self.recul_val = 0x6d if moy_g >= moy_d else 0x3e
-
-                                # Si on se recoince en boucle (>=2 fois), le cote ouvert ne suffit pas :
-                                # on inverse le braquage pour tenter une autre sortie.
-                                if self.reculs_consecutifs >= 2:
-                                    self.recul_val = 0x3e if self.recul_val == 0x6d else 0x6d
-
-                                print(f"!!! STOP : {dist_frontale:.0f}mm -> recul {self.DUREE_RECUL}s "
-                                      f"(coince x{self.reculs_consecutifs}) !!!")
+                                # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x3e <-> 0x6d
+                                if self.etat_voie == "COURBE_GAUCHE":
+                                    self.recul_val = 0x6d
+                                elif self.etat_voie == "COURBE_DROITE":
+                                    self.recul_val = 0x3e
+                                elif self.etat_voie == "LIGNE_DROITE":
+                                    if plus_proche and plus_proche[1] < 60:
+                                        self.recul_val = 0x3e
+                                    elif plus_proche and plus_proche[1] > 300:
+                                        self.recul_val = 0x6d
+                                print(f"!!! STOP : {dist_frontale:.0f}mm -> recul {self.DUREE_RECUL}s !!!")
 
                         # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
                         if t_now < self.temps_fin_recul:
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
                                 com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
+                                print("recul")
                                 continue
 
                         # --- LOGIQUE DE NAVIGATION (20Hz) ---
@@ -240,10 +228,10 @@ class CCerveau:
                                 target += sens * self.BIAIS_FORCE
 
                             # d) Bouclier anti-mur LATERAL : mur a DROITE (25-90) -> GAUCHE ;
-                            #    mur a GAUCHE (270-335) -> DROITE. Force bornee (BOUCLIER_MAX) pour ne
-                            #    pas saturer a elle seule, et zones laterales seulement : un point pile
-                            #    DEVANT (~0deg) ne doit PAS faire braquer a gauche arbitrairement (il est
-                            #    deja gere par le gap et la marche arriere).
+                            #    mur a GAUCHE (270-335) -> DROITE. Force BORNEE (BOUCLIER_MAX) pour ne pas
+                            #    saturer a elle seule, et zones laterales seulement : un point pile DEVANT
+                            #    (~0deg) ne doit PAS faire braquer a gauche arbitrairement (il est deja
+                            #    gere par le gap et la marche arriere).
                             if plus_proche and plus_proche[2] < self.SEUIL_BOUCLIER:
                                 ang_p = plus_proche[1]
                                 force = min(self.BOUCLIER_MAX,
@@ -272,15 +260,13 @@ class CCerveau:
                             trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
                             com.send_command(0x07, trame_servo)
 
-                            # Vitesse : rapide seulement si LIGNE_DROITE ET braquage faible.
-                            # Un fort braquage (meme classe "ligne droite") = on ralentit aussi,
-                            # sinon on arrive trop vite dans la correction et on touche le mur.
-                            braquage_fort = abs(angle_destination) > 18
-                            if self.etat_voie == "LIGNE_DROITE" and not braquage_fort:
+                            if self.etat_voie == "LIGNE_DROITE":
                                 com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage (ralenti)
+                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage
+
+                            print("avance")
 
                             self.last_cmd_t = t_now
 
