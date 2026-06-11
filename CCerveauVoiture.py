@@ -45,6 +45,14 @@ class CCerveau:
         self.temps_fin_recul = 0   # fin de la fenetre de marche arriere soutenue
         self.DUREE_RECUL = 1.5     # duree minimale de marche arriere (s) -- quoi qu'il arrive
 
+        # Detection de BLOCAGE (coince contre un mur LATERAL en virage : le recul frontal
+        # ne se declenche pas). Signature : forte butee maintenue + scene figee (on n'avance plus).
+        self.obs_stuck_ref = None  # distance de reference de l'obstacle le plus proche
+        self.t_progres = 0         # derniere fois que la scene a change (= on a avance)
+        self.DUREE_STUCK = 1.5     # s sans progres a forte butee -> considere coince
+        self.STUCK_BAND = 120      # mm : variation mini de l'obstacle proche pour dire "ca avance"
+        self.STUCK_LOCK = 26       # deg : on ne teste le blocage qu'a forte butee
+
         # --- FUSION navigation : "aller au plus loin" (pilote) + centrage doux + bouclier ---
         # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
         self.K_CENTRE = 0.010      # centrage doux : s'eloigne du mur le plus proche (mur_G ~ mur_D)
@@ -272,6 +280,25 @@ class CCerveau:
                             angle_destination = max(-30, min(30, angle_destination))
 
                             self.angle = angle_destination # Pour l'enregistrement dans la base de donnees
+
+                            # --- DETECTION DE BLOCAGE (coince contre un mur en virage) ---
+                            # On suit l'obstacle le plus proche : tant qu'il VARIE, on progresse.
+                            # S'il reste fige (scene immobile) ALORS qu'on est a forte butee, c'est
+                            # qu'on est coince -> on arme un recul de desengagement (mur lateral, donc
+                            # le recul frontal ci-dessus ne s'est pas declenche).
+                            d_proche = plus_proche[2] if plus_proche else None
+                            if d_proche is not None:
+                                if self.obs_stuck_ref is None or abs(d_proche - self.obs_stuck_ref) > self.STUCK_BAND:
+                                    self.obs_stuck_ref = d_proche
+                                    self.t_progres = t_now
+                            if (abs(angle_destination) >= self.STUCK_LOCK
+                                    and t_now - self.t_progres > self.DUREE_STUCK
+                                    and t_now >= self.temps_fin_recul):
+                                self.temps_fin_recul = t_now + self.DUREE_RECUL
+                                # meme convention que le recul frontal (cf. SENS_GAP cote materiel)
+                                self.recul_val = 0x6d if self.etat_voie == "COURBE_GAUCHE" else 0x3e
+                                self.t_progres = t_now
+                                print(f"!!! COINCE en virage ({d_proche:.0f}mm fige) -> recul desengagement")
 
                             servo_val = self.conversion_angle(angle_destination)
 
