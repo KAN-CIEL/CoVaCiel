@@ -77,6 +77,12 @@ class CCerveau:
         self.K_RENFORT = 0.02      # deg de braquage par mm sous le seuil
         self.RENFORT_MAX = 18      # deg : plafond du renfort de virage
 
+        # Distance MINI au mur INTERIEUR (= mur lateral le plus proche) : s'il passe sous
+        # SEUIL_MUR_INT, on contre-braque pour s'en eloigner -> evite de raser / se coincer.
+        # (SEUIL_MUR_INT defini plus haut = 450 mm)
+        self.K_MUR_INT = 0.04      # deg de braquage par mm sous le seuil
+        self.MUR_INT_MAX = 12      # deg : plafond de la repulsion du mur interieur
+
         #enregistrement
         self.angle = 0
 
@@ -267,6 +273,22 @@ class CCerveau:
                                     target -= renfort   # tourne PLUS a droite
                                 else:
                                     target += renfort   # tourne PLUS a gauche
+
+                            # d) MUR INTERIEUR : garder une distance MINI au mur lateral le plus
+                            #    proche. S'il passe sous SEUIL_MUR_INT, on contre-braque pour s'en
+                            #    eloigner (anti-rasage / anti-blocage en virage). Le mur interieur =
+                            #    simplement le plus proche des deux cotes (robuste, sans dependre de
+                            #    l'etat). pre-SENS : negatif = DROITE, positif = GAUCHE (apres SENS_GAP).
+                            d_g = min(gauche) if gauche else 9999
+                            d_d = min(droit) if droit else 9999
+                            mur_proche = min(d_g, d_d)
+                            if mur_proche < self.SEUIL_MUR_INT:
+                                repulse = min(self.MUR_INT_MAX,
+                                              self.K_MUR_INT * (self.SEUIL_MUR_INT - mur_proche))
+                                if d_g <= d_d:
+                                    target -= repulse   # mur proche a GAUCHE -> s'eloigne a DROITE
+                                else:
+                                    target += repulse   # mur proche a DROITE -> s'eloigne a GAUCHE
 
                             # Inversion materielle (cf. SENS_GAP) appliquee a l'ensemble.
                             target *= self.SENS_GAP
