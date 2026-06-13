@@ -206,9 +206,7 @@ class CCerveau:
                         # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
                         if t_now < self.temps_fin_recul:
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
-                                # Recul a -30 (0xe2) au lieu de -19 (0xed) : meme puissance que la
-                                # marche avant, pour vraiment decoincer la voiture (sinon immobile).
-                                com.send_command(0x05, b'\xe2\x00\x00\x00\x00\x00') #recul
+                                com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
                                 continue
 
