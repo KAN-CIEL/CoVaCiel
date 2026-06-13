@@ -81,7 +81,7 @@ class CCerveau:
         # murs ; mais des qu'un mur lateral devient proche, un braquage de FUITE ECRASE
         # progressivement le FTG (priorite a ne pas toucher le mur). A DIST_CRITIQUE et en
         # deca, la fuite est totale (la voiture s'eloigne a fond du mur).
-        self.SEUIL_REPULSE = 220   # mm : sous cette distance laterale, la repulsion s'active
+        self.SEUIL_REPULSE = 350   # mm : sous cette distance (mur le + proche), la repulsion s'active
         self.DIST_CRITIQUE = 130   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
         self.FUITE_MAX = 30        # deg : braquage de fuite max (butee opposee au mur)
 
@@ -289,20 +289,21 @@ class CCerveau:
                                     target += renfort   # tourne PLUS a gauche
 
                             # d) REPULSION PRIORITAIRE DES MURS : tant qu'on est loin, on suit la
-                            #    corde (FTG ci-dessus). Des qu'un mur lateral devient proche, un
-                            #    braquage de FUITE ECRASE progressivement le FTG -> on ne touche
-                            #    jamais le mur. Le mur le plus proche des deux cotes decide.
+                            #    corde (FTG ci-dessus). Des qu'un mur devient proche -- SUR TOUT LE
+                            #    CHAMP AVANT (le point le plus proche, quel que soit son angle, pas
+                            #    seulement les secteurs lateraux) -- un braquage de FUITE ECRASE
+                            #    progressivement le FTG -> la voiture reste ECARTEE des murs.
                             #    pre-SENS : negatif = DROITE, positif = GAUCHE (apres SENS_GAP).
-                            d_g = min(gauche) if gauche else 9999
-                            d_d = min(droit) if droit else 9999
-                            mur_proche = min(d_g, d_d)
-                            if mur_proche < self.SEUIL_REPULSE:
+                            if plus_proche and plus_proche[2] < self.SEUIL_REPULSE:
                                 # gravite : 0 a SEUIL_REPULSE -> 1 a DIST_CRITIQUE (et en deca)
-                                grav = (self.SEUIL_REPULSE - mur_proche) / \
+                                grav = (self.SEUIL_REPULSE - plus_proche[2]) / \
                                        (self.SEUIL_REPULSE - self.DIST_CRITIQUE)
                                 grav = max(0.0, min(1.0, grav))
-                                # braquage de fuite : mur a GAUCHE -> fuir a DROITE (pre-SENS negatif)
-                                fuite = -self.FUITE_MAX if d_g <= d_d else self.FUITE_MAX
+                                # angle du mur le plus proche : rel > 0 = a DROITE, < 0 = a GAUCHE
+                                ang_p = plus_proche[1]
+                                rel = ang_p if ang_p <= 180 else ang_p - 360
+                                # mur a DROITE -> fuir a GAUCHE (pre-SENS positif) ; a gauche -> a droite
+                                fuite = self.FUITE_MAX if rel > 0 else -self.FUITE_MAX
                                 # melange a PRIORITE : plus le mur est proche, plus la fuite domine
                                 target = (1.0 - grav) * target + grav * fuite
 
