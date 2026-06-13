@@ -204,7 +204,9 @@ class CCerveau:
                         # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
                         if t_now < self.temps_fin_recul:
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
-                                com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
+                                # Recul a -30 (0xe2) au lieu de -19 (0xed) : meme puissance que la
+                                # marche avant, pour vraiment decoincer la voiture (sinon immobile).
+                                com.send_command(0x05, b'\xe2\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
                                 continue
 
@@ -327,8 +329,12 @@ class CCerveau:
                                     and t_now - self.t_progres > self.DUREE_STUCK
                                     and t_now >= self.temps_fin_recul):
                                 self.temps_fin_recul = t_now + self.DUREE_RECUL
-                                # meme convention que le recul frontal (cf. SENS_GAP cote materiel)
-                                self.recul_val = 0x6d if self.etat_voie == "COURBE_GAUCHE" else 0x3e
+                                # On RECULE roues vers le cote le PLUS OUVERT -> la voiture recule
+                                # VERS l'espace libre (sur un virage gauche : roues a gauche).
+                                # 0x3e = servo 62 = roues GAUCHE ; 0x6d = servo 109 = roues DROITE.
+                                moy_g = sum(gauche) / len(gauche) if gauche else 0
+                                moy_d = sum(droit) / len(droit) if droit else 0
+                                self.recul_val = 0x3e if moy_g >= moy_d else 0x6d
                                 self.t_progres = t_now
                                 print(f"!!! COINCE en virage ({d_proche:.0f}mm fige) -> recul desengagement")
 
