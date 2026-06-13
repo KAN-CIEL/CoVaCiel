@@ -198,7 +198,6 @@ class CCerveau:
                                 trame_recul = bytes([self.recul_val, 0, 0, 0, 0, 0])
                                 com.send_command(0x05, b'\xed\x00\x00\x00\x00\x00') #recul
                                 com.send_command(0x07, trame_recul)
-                                print("recul")
                                 continue
 
                         # --- LOGIQUE DE NAVIGATION (20Hz) ---
@@ -336,8 +335,6 @@ class CCerveau:
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
                                 com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage
-
-                            print("avance")
 
                             self.last_cmd_t = t_now
 

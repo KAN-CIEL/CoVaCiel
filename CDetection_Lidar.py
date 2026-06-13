@@ -26,7 +26,7 @@ class CDetection:
             print(f"Erreur de connexion au LIDAR: {e}")
             return False
 
-    def scans_resilients(self, max_buf_meas=3000):
+    def scans_resilients(self, max_buf_meas=8000):
         """ Generateur de scans qui SURVIT aux paquets corrompus du LIDAR
             ('Check bit not equal to 1', 'New scan flags mismatch') SANS arreter le
             moteur.

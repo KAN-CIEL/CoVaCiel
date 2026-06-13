@@ -99,7 +99,10 @@ class CCommunication:
 
         if cmd in self.CMD_RECEPTION:
             name = self.CMD_RECEPTION[cmd]
-            print(f"RX: {name} | {payload.hex()}")
+            # print desactive : floodait stdout a chaque message UART -> stallait la boucle
+            # de nav -> debordement du buffer LIDAR. Reactiver pour debug ponctuel seulement.
+            # print(f"RX: {name} | {payload.hex()}")
+            pass
         #self.recorder.sauvegarder_trame(cmd, payload) #nico
 
     def get_vitesse(self):       #nico1
