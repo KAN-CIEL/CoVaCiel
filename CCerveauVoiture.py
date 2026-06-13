@@ -77,11 +77,13 @@ class CCerveau:
         self.K_RENFORT = 0.02      # deg de braquage par mm sous le seuil
         self.RENFORT_MAX = 18      # deg : plafond du renfort de virage
 
-        # Distance MINI au mur INTERIEUR (= mur lateral le plus proche) : s'il passe sous
-        # SEUIL_MUR_INT, on contre-braque pour s'en eloigner -> evite de raser / se coincer.
-        # (SEUIL_MUR_INT defini plus haut = 450 mm)
-        self.K_MUR_INT = 0.04      # deg de braquage par mm sous le seuil
-        self.MUR_INT_MAX = 12      # deg : plafond de la repulsion du mur interieur
+        # REPULSION PRIORITAIRE DES MURS : on suit la corde (FTG) tant qu'on est loin des
+        # murs ; mais des qu'un mur lateral devient proche, un braquage de FUITE ECRASE
+        # progressivement le FTG (priorite a ne pas toucher le mur). A DIST_CRITIQUE et en
+        # deca, la fuite est totale (la voiture s'eloigne a fond du mur).
+        self.SEUIL_REPULSE = 220   # mm : sous cette distance laterale, la repulsion s'active
+        self.DIST_CRITIQUE = 130   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
+        self.FUITE_MAX = 30        # deg : braquage de fuite max (butee opposee au mur)
 
         #enregistrement
         self.angle = 0
@@ -286,21 +288,23 @@ class CCerveau:
                                 else:
                                     target += renfort   # tourne PLUS a gauche
 
-                            # d) MUR INTERIEUR : garder une distance MINI au mur lateral le plus
-                            #    proche. S'il passe sous SEUIL_MUR_INT, on contre-braque pour s'en
-                            #    eloigner (anti-rasage / anti-blocage en virage). Le mur interieur =
-                            #    simplement le plus proche des deux cotes (robuste, sans dependre de
-                            #    l'etat). pre-SENS : negatif = DROITE, positif = GAUCHE (apres SENS_GAP).
+                            # d) REPULSION PRIORITAIRE DES MURS : tant qu'on est loin, on suit la
+                            #    corde (FTG ci-dessus). Des qu'un mur lateral devient proche, un
+                            #    braquage de FUITE ECRASE progressivement le FTG -> on ne touche
+                            #    jamais le mur. Le mur le plus proche des deux cotes decide.
+                            #    pre-SENS : negatif = DROITE, positif = GAUCHE (apres SENS_GAP).
                             d_g = min(gauche) if gauche else 9999
                             d_d = min(droit) if droit else 9999
                             mur_proche = min(d_g, d_d)
-                            if mur_proche < self.SEUIL_MUR_INT:
-                                repulse = min(self.MUR_INT_MAX,
-                                              self.K_MUR_INT * (self.SEUIL_MUR_INT - mur_proche))
-                                if d_g <= d_d:
-                                    target -= repulse   # mur proche a GAUCHE -> s'eloigne a DROITE
-                                else:
-                                    target += repulse   # mur proche a DROITE -> s'eloigne a GAUCHE
+                            if mur_proche < self.SEUIL_REPULSE:
+                                # gravite : 0 a SEUIL_REPULSE -> 1 a DIST_CRITIQUE (et en deca)
+                                grav = (self.SEUIL_REPULSE - mur_proche) / \
+                                       (self.SEUIL_REPULSE - self.DIST_CRITIQUE)
+                                grav = max(0.0, min(1.0, grav))
+                                # braquage de fuite : mur a GAUCHE -> fuir a DROITE (pre-SENS negatif)
+                                fuite = -self.FUITE_MAX if d_g <= d_d else self.FUITE_MAX
+                                # melange a PRIORITE : plus le mur est proche, plus la fuite domine
+                                target = (1.0 - grav) * target + grav * fuite
 
                             # Inversion materielle (cf. SENS_GAP) appliquee a l'ensemble.
                             target *= self.SENS_GAP
