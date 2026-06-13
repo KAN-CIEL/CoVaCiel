@@ -52,6 +52,8 @@ class CCerveau:
         self.DUREE_STUCK = 1.5     # s sans progres a forte butee -> considere coince
         self.STUCK_BAND = 120      # mm : variation mini de l'obstacle proche pour dire "ca avance"
         self.STUCK_LOCK = 26       # deg : on ne teste le blocage qu'a forte butee
+        self.STUCK_DIST = 300      # mm : on ne se considere coince que si un mur est REELLEMENT
+                                   #      proche (sinon, en couloir ouvert, faux blocage -> recul saccade)
 
         # --- FUSION navigation : "aller au plus loin" (pilote) + centrage doux + bouclier ---
         # Convention interne : '+' = tourner a GAUCHE, '-' = tourner a DROITE.
@@ -328,7 +330,8 @@ class CCerveau:
                                 if self.obs_stuck_ref is None or abs(d_proche - self.obs_stuck_ref) > self.STUCK_BAND:
                                     self.obs_stuck_ref = d_proche
                                     self.t_progres = t_now
-                            if (abs(angle_destination) >= self.STUCK_LOCK
+                            if (d_proche is not None and d_proche < self.STUCK_DIST
+                                    and abs(angle_destination) >= self.STUCK_LOCK
                                     and t_now - self.t_progres > self.DUREE_STUCK
                                     and t_now >= self.temps_fin_recul):
                                 self.temps_fin_recul = t_now + self.DUREE_RECUL
