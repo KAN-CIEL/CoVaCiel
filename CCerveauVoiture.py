@@ -136,7 +136,10 @@ class CCerveau:
             com.start()
             print("Analyse active. Mode Navigation engage. Logging actif.")
             try:
-                scans = self.lidar.lidar.iter_scans()
+                # Flux de scans RESILIENT : un paquet corrompu ('Check bit not equal to 1')
+                # ne tue plus la course -> resync rapide du flux, moteur maintenu, la voiture
+                # garde sa derniere commande pendant ~50-100 ms (cf. CDetection.scans_resilients).
+                scans = self.lidar.scans_resilients()
 
                 angle_destination = 0.0
                 servo_val = 86
