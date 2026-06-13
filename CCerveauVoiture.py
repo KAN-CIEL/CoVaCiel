@@ -136,16 +136,24 @@ class CCerveau:
             com.start()
             print("Analyse active. Mode Navigation engage. Logging actif.")
             try:
-                # Flux de scans RESILIENT : un paquet corrompu ('Check bit not equal to 1')
-                # ne tue plus la course -> resync rapide du flux, moteur maintenu, la voiture
-                # garde sa derniere commande pendant ~50-100 ms (cf. CDetection.scans_resilients).
-                scans = self.lidar.scans_resilients()
+                # Le LIDAR est lu par un THREAD dedie qui draine le buffer en continu
+                # (cf. CDetection) -> plus de debordement/desync. La nav consomme juste le
+                # DERNIER scan disponible, a son rythme, sans bloquer le LIDAR.
+                self.lidar.start_reader()
 
                 angle_destination = 0.0
                 servo_val = 86
+                derniere_seq = -1
 
-                for scan in scans:
+                while True:
                     try:
+                        # Dernier scan du thread lecteur ; si pas de NOUVEAU scan -> petite attente.
+                        seq, scan = self.lidar.get_latest_scan()
+                        if scan is None or seq == derniere_seq:
+                            time.sleep(0.005)
+                            continue
+                        derniere_seq = seq
+
                         # 1. Filtrage et Analyse
                         self.gestion_lidar.filtrer_tout_en_un(scan)
 
@@ -339,12 +347,14 @@ class CCerveau:
                             self.last_cmd_t = t_now
 
                     except ValueError:
-                        self.lidar.lidar.clear_input()
+                        # Erreur de traitement d'un scan : on passe au suivant. On ne touche
+                        # PAS au LIDAR ici (c'est le thread lecteur qui gere le flux serie).
                         continue
 
             except Exception as e:
                 print(f"Erreur majeure : {e}")
             finally:
+                self.lidar.stop_reader()   # arrete le thread lecteur AVANT de couper le LIDAR
                 self.lidar.stop_lidar()
                 # NB : on NE ferme PAS l'enregistreur ici : c'est une instance partagee qui #nico1
                 # doit persister entre les courses (GO/STOP). Elle se ferme a l'arret du programme. #nico1

@@ -1,6 +1,7 @@
 from rplidar import RPLidar, RPLidarException
 from CGestion_Lidar import CGestion
 import time
+import threading
 
 class CDetection:
     def __init__(self):
@@ -9,6 +10,17 @@ class CDetection:
         self.PORT = '/dev/lidar'   # symlink fixe (udev) -> CP2102 du RPLidar
         self.BAUDERATE = 256000
         self.timeout = 3
+
+        # --- Thread lecteur LIDAR ---
+        # Un thread dedie lit le LIDAR EN CONTINU et garde le dernier scan. Comme il ne
+        # fait QUE lire, il draine le buffer serie en permanence -> plus de debordement
+        # (donc plus de 'Check bit' / 'flags mismatch' dus au vidage du buffer). La boucle
+        # de navigation consomme le dernier scan a son rythme, sans bloquer le LIDAR.
+        self._latest_scan = None
+        self._scan_seq = 0                 # incremente a chaque nouveau scan (detection de fraicheur)
+        self._scan_lock = threading.Lock()
+        self._reader_running = False
+        self._reader_thread = None
 
     def start_lidar(self):
         try:
@@ -26,34 +38,57 @@ class CDetection:
             print(f"Erreur de connexion au LIDAR: {e}")
             return False
 
-    def scans_resilients(self, max_buf_meas=8000):
-        """ Generateur de scans qui SURVIT aux paquets corrompus du LIDAR
-            ('Check bit not equal to 1', 'New scan flags mismatch') SANS arreter le
-            moteur.
+    def start_reader(self, max_buf_meas=8000):
+        """ Demarre le thread lecteur LIDAR (draine le buffer en continu). """
+        if self._reader_running:
+            return
+        with self._scan_lock:
+            self._latest_scan = None   # pas de scan perime d'une course precedente
+        self._reader_running = True
+        self._reader_thread = threading.Thread(
+            target=self._reader_loop, args=(max_buf_meas,), daemon=True)
+        self._reader_thread.start()
 
-            Sur erreur, on resynchronise UNIQUEMENT le flux serie : on quitte le mode
-            scan (stop) + on vide le buffer (clear_input), ~50-100 ms, puis on relance
-            la lecture. Le MOTEUR continue de tourner -> la voiture garde sa derniere
-            commande et NE S'ARRETE PAS (contrairement a un reset/stop_motor de ~2.5 s).
-
-            max_buf_meas eleve : evite que le buffer serie deborde si la boucle de
-            navigation prend du retard (une des causes des paquets corrompus). """
-        scans = self.lidar.iter_scans(max_buf_meas=max_buf_meas)
-        while True:
+    def _reader_loop(self, max_buf_meas):
+        """ Boucle du thread lecteur : lit les scans en continu et stocke le dernier.
+            Comme ce thread ne fait QUE lire, le buffer serie ne deborde plus. Sur paquet
+            corrompu, on resynchronise le flux (moteur maintenu) sans toucher a la nav. """
+        while self._reader_running:
             try:
-                for scan in scans:
-                    yield scan
-                return  # flux epuise (cas rare)
+                for scan in self.lidar.iter_scans(max_buf_meas=max_buf_meas):
+                    if not self._reader_running:
+                        break
+                    with self._scan_lock:
+                        self._latest_scan = scan
+                        self._scan_seq += 1
             except RPLidarException as e:
-                print(f"LIDAR: paquet corrompu ({e}) -> resync rapide (moteur maintenu)")
+                # Desync (buffer/corruption) : on resync le flux, moteur maintenu.
+                print(f"LIDAR resync ({e})")
                 try:
-                    self.lidar.stop()         # quitte le mode scan (NE coupe PAS le moteur)
-                    self.lidar.clear_input()  # vide le buffer serie corrompu
-                    time.sleep(0.05)          # laisse le flux se stabiliser (~50 ms)
+                    self.lidar.stop()
+                    self.lidar.clear_input()
+                    time.sleep(0.05)
                 except Exception:
                     pass
-                # Relance la lecture ; le moteur tourne toujours -> reprise quasi immediate
-                scans = self.lidar.iter_scans(max_buf_meas=max_buf_meas)
+            except Exception as e:
+                # Erreur plus grave (port ferme...) : on sort proprement.
+                if self._reader_running:
+                    print(f"LIDAR lecteur arrete : {e}")
+                break
+
+    def get_latest_scan(self):
+        """ Renvoie (numero_de_sequence, dernier_scan). Le numero change a chaque nouveau
+            scan -> la nav sait si le scan est NEUF ou deja traite (thread-safe). """
+        with self._scan_lock:
+            return self._scan_seq, self._latest_scan
+
+    def stop_reader(self):
+        """ Arrete le thread lecteur (avant de couper le LIDAR). """
+        self._reader_running = False
+        t = self._reader_thread
+        if t is not None:
+            t.join(timeout=1.0)
+        self._reader_thread = None
 
     def stop_lidar(self):
         # On v?rifie si l'objet lidar existe
