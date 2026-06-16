@@ -58,7 +58,7 @@ class CCerveau:
         self.BIAIS_FORCE = 10      # braquage FORCE ajoute dans le sens du virage (deg) ; le PID regule autour
 
         # --- FOLLOW-THE-GAP (braquage principal) ---
-        self.K_STEER = 1.0         # braquage (deg de servo) par degre d'ecart du cap FTG vise (reactif)
+        self.K_STEER = 0.8         # braquage (deg de servo) par degre d'ecart du cap FTG vise
         self.FTG_BULLE_DEG = 20    # demi-largeur (deg) de la bulle de securite autour du mur le + proche
         # Centrage doux : le FTG seul longe le mur interieur (il "coupe") ; cette correction
         # repousse du mur lateral le plus proche pour rester au milieu du couloir EN LIGNE DROITE.
@@ -74,10 +74,8 @@ class CCerveau:
         # murs ; mais des qu'un mur lateral devient proche, un braquage de FUITE ECRASE
         # progressivement le FTG (priorite a ne pas toucher le mur). A DIST_CRITIQUE et en
         # deca, la fuite est totale (la voiture s'eloigne a fond du mur).
-        self.SEUIL_REPULSE = 450   # mm : sous cette distance (mur le + proche), la repulsion s'active
-                                   #      (relevee pour ANTICIPER plus tot a vitesse elevee)
-        self.DIST_CRITIQUE = 220   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
-                                   #      (relevee : braque a fond bien AVANT d'atteindre le mur)
+        self.SEUIL_REPULSE = 350   # mm : sous cette distance (mur le + proche), la repulsion s'active
+        self.DIST_CRITIQUE = 130   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
         self.FUITE_MAX = 30        # deg : braquage de fuite max (butee opposee au mur)
 
         #enregistrement
@@ -306,7 +304,7 @@ class CCerveau:
                             target = max(-30, min(30, target))
 
                             # 4. Lissage passe-bas (70% ancienne, 30% nouvelle = braquage progressif, moins sec)
-                            angle_destination = (angle_destination * 0.3) + (target * 0.7)
+                            angle_destination = (angle_destination * 0.4) + (target * 0.6)
 
                             # Bornage final et Conversion
                             angle_destination = max(-30, min(30, angle_destination))
@@ -320,10 +318,10 @@ class CCerveau:
                             com.send_command(0x07, trame_servo)
 
                             if self.etat_voie == "LIGNE_DROITE":
-                                com.send_command(0x05, b'\x32\x00\x1e\x00\x00\x00') # Vitesse stable (50)
+                                com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable (40)
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
-                                com.send_command(0x05, b'\x28\x00\x00\x00\x00\x00') # Vitesse virage (40)
+                                com.send_command(0x05, b'\x1e\x00\x00\x00\x00\x00') # Vitesse virage (30)
 
                             self.last_cmd_t = t_now
 
