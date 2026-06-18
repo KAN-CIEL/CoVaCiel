@@ -19,8 +19,8 @@ class CGestion:
         return self.scan
     """
 
-    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=4000, qualite_min=10, 
-                           angle_min=90, angle_max=270):
+    def filtrer_tout_en_un(self, scan_brut, dist_min=100, dist_max=4000, qualite_min=10,
+                           angle_min=110, angle_max=250):
         """ Filtre tout en un seul passage pour �conomiser le CPU """
         self.scan = [
             p for p in scan_brut 
@@ -70,7 +70,7 @@ class CGestion:
         best_b = max(comptes, key=lambda b: sommes[b] / comptes[b])
         return best_b * taille_bin
 
-    def direction_ftg(self, demi_champ=90, taille_bin=6, rayon_bulle_deg=20):
+    def direction_ftg(self, demi_champ=110, taille_bin=6, rayon_bulle_deg=20):
         """ FOLLOW-THE-GAP (base sur les echos REELS). Renvoie (cap_relatif_deg, profondeur_mm) :
             - cap_relatif_deg : angle vers lequel piloter (+ = droite, 0 = devant) ;
             - profondeur_mm   : distance moyenne mesuree dans la direction visee.
