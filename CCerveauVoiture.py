@@ -16,7 +16,7 @@ class CCerveau:
         self.last_db_save_t = 0 #nico
 
 
-        self.distance_arret = 250 # mm  (releve de 200 -> reagit un peu plus tot, moins de contact)
+        self.distance_arret = 230 # mm  (releve de 200 -> reagit un peu plus tot, moins de contact)
         self.distances_urgence = 400
         self.SEUIL_MUR_INT = 450 # mm
         self.SEUIL_MUR_EXT = 300 # mm
@@ -74,9 +74,9 @@ class CCerveau:
         # murs ; mais des qu'un mur lateral devient proche, un braquage de FUITE ECRASE
         # progressivement le FTG (priorite a ne pas toucher le mur). A DIST_CRITIQUE et en
         # deca, la fuite est totale (la voiture s'eloigne a fond du mur).
-        self.SEUIL_REPULSE = 350   # mm : sous cette distance (mur le + proche), la repulsion s'active
-        self.DIST_CRITIQUE = 130   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
-        self.FUITE_MAX = 30        # deg : braquage de fuite max (butee opposee au mur)
+        self.SEUIL_REPULSE = 330   # mm : sous cette distance (mur le + proche), la repulsion s'active
+        self.DIST_CRITIQUE = 170   # mm : a cette distance, la fuite est PRIORITAIRE a 100%
+        self.FUITE_MAX = 15        # deg : braquage de fuite max (butee opposee au mur)
 
         #enregistrement
         self.angle = 0
@@ -170,6 +170,11 @@ class CCerveau:
                         # Distance de l'obstacle DROIT DEVANT (cone etroit) : un mur lateral de
                         # couloir ne doit PAS declencher la marche arriere.
                         dist_frontale = self.gestion_lidar.distance_frontale_min()
+                        # Cone ETROIT (+/-15deg) reserve au RECUL : en virage serre le mur exterieur
+                        # est a ~25-30deg de l'axe -> avec le cone large (dist_frontale) il declenchait
+                        # un recul alors qu'on etait juste en train de le CONTOURNER -> blocage en boucle.
+                        # Ici, seul un mur VRAIMENT droit devant arme la marche arriere.
+                        dist_recul = self.gestion_lidar.distance_frontale_min(demi_angle=15)
 
                         # Statut d'arret d'urgence (obstacle proche DEVANT) -> sert au champ "lidar" #nico1
                         arret_urgence = bool(dist_frontale < self.distance_arret)  #nico1
@@ -182,7 +187,7 @@ class CCerveau:
 
                         # --- MARCHE ARRIERE SOUTENUE (>= DUREE_RECUL), seulement si obstacle DEVANT ---
                         # Nouveau declenchement : on choisit le sens et on arme une fenetre de recul.
-                        if dist_frontale < self.distance_arret and t_now >= self.temps_fin_recul:
+                        if dist_recul < self.distance_arret and t_now >= self.temps_fin_recul:
                                 self.temps_fin_recul = t_now + self.DUREE_RECUL
                                 # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x3e <-> 0x6d
                                 if self.etat_voie == "COURBE_GAUCHE":
@@ -194,7 +199,7 @@ class CCerveau:
                                         self.recul_val = 0x3e
                                     elif plus_proche and plus_proche[1] > 300:
                                         self.recul_val = 0x6d
-                                print(f"!!! STOP : {dist_frontale:.0f}mm -> recul {self.DUREE_RECUL}s !!!")
+                                print(f"!!! STOP : {dist_recul:.0f}mm -> recul {self.DUREE_RECUL}s !!!")
 
                         # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
                         if t_now < self.temps_fin_recul:
@@ -317,7 +322,7 @@ class CCerveau:
                             trame_servo = bytes([servo_val, 0, 0, 0, 0, 0])
                             com.send_command(0x07, trame_servo)
 
-                            if self.etat_voie == "LIGNE_DROITE":
+                            if self.angle < 7 and self.angle > -7: #self.etat_voie == "LIGNE_DROITE":
                                 com.send_command(0x05, b'\x28\x00\x1e\x00\x00\x00') # Vitesse stable (40)
                             else:
                                 #com.send_command(0x05, b'\x00\x00\x00\x00\x00\x00')
