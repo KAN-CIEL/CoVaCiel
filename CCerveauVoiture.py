@@ -189,16 +189,17 @@ class CCerveau:
                         # Nouveau declenchement : on choisit le sens et on arme une fenetre de recul.
                         if dist_recul < self.distance_arret and t_now >= self.temps_fin_recul:
                                 self.temps_fin_recul = t_now + self.DUREE_RECUL
-                                # Convention G/D inversee cote materiel (cf. SENS_GAP) : 0x3e <-> 0x6d
-                                if self.etat_voie == "COURBE_GAUCHE":
-                                    self.recul_val = 0x6d
-                                elif self.etat_voie == "COURBE_DROITE":
-                                    self.recul_val = 0x3e
-                                elif self.etat_voie == "LIGNE_DROITE":
-                                    if plus_proche and plus_proche[1] < 60:
-                                        self.recul_val = 0x3e
-                                    elif plus_proche and plus_proche[1] > 300:
-                                        self.recul_val = 0x6d
+                                # Recul : on garde les roues dans le sens du braquage courant.
+                                #   angle dans [-30 ; -7] -> roues a GAUCHE (0x3e = servo 62)
+                                #   angle dans [ 7 ;  30] -> roues a DROITE (0x6d = servo 109)
+                                #   sinon (-7 ; 7)        -> tout DROIT     (0x56 = servo 86)
+                                # (servo < 86 = gauche, > 86 = droite)
+                                if self.angle <= -7:
+                                    self.recul_val = 0x3e   # roues a gauche
+                                elif self.angle >= 7:
+                                    self.recul_val = 0x6d   # roues a droite
+                                else:
+                                    self.recul_val = 0x56   # tout droit
                                 print(f"!!! STOP : {dist_recul:.0f}mm -> recul {self.DUREE_RECUL}s !!!")
 
                         # Tant qu'on est dans la fenetre, on RECULE en continu (quoi qu'il arrive)
